@@ -89,6 +89,34 @@ try {
   await page.getByTestId('mode-toggle').click();
   await expect(body).toBeVisible();
 
+  // Document format settings go to the frontmatter and apply to the editor.
+  await page.getByRole('button', { name: 'Format', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Font', exact: true }).selectOption('Georgia');
+  await page.getByRole('combobox', { name: 'Line spacing' }).selectOption('2');
+  await page.getByRole('group', { name: 'Alignment' }).getByRole('button', { name: 'Justify' }).click();
+  await page.getByRole('checkbox', { name: 'Page numbers in the PDF' }).check();
+  await expect.poll(() => read('First note.md')).toMatch(/^---\nfont: Georgia\nline-height: 2\nalign: justify\npage-numbers: true\n---\n# Heading one/);
+  await expect(page.locator('.cm-frontmatter')).toHaveText('Georgia · 12 pt · Double · justify · Letter');
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.cm-content .cm-line:not(.cm-heading):not(.cm-task-line)')).textAlign)).toBe('justify');
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.cm-editor')).fontFamily)).toContain('Georgia');
+
+  // The toolbar writes underline tags and aligned paragraphs. Live preview hides the tags.
+  const formatting = page.getByRole('toolbar', { name: 'Formatting' });
+  await body.locator('.cm-line').last().click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Shift+Home');
+  await formatting.getByRole('button', { name: /^Underline/ }).click();
+  await expect.poll(() => read('First note.md')).toContain('<u>Plain line</u>');
+  await formatting.getByRole('button', { name: /^Align center/ }).click();
+  await expect.poll(() => read('First note.md')).toContain('<p align="center"><u>Plain line</u></p>');
+  await page.keyboard.press('Control+Home');
+  await expect(body.locator('.cm-line.cm-align-center')).toHaveCount(1);
+  await expect(body.locator('.cm-html-u')).toHaveText('Plain line');
+  await expect(body).not.toContainText('<u>');
+  await page.getByTestId('mode-toggle').click();
+  await expect(article.locator('p[style*="center"] u')).toHaveText('Plain line');
+  await page.getByTestId('mode-toggle').click();
+
   // Rename through the title updates the file and the link in the other note.
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Second note');
@@ -175,7 +203,7 @@ try {
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('First note');
   await expect(page.locator('.cm-content')).toContainText('Last words.');
   expect(errors).toEqual([]);
-  console.log('PASS: vault, live preview, tasks, wikilinks, backlinks, outline, history, reading view, rename, search, quick switcher, command palette, watcher, PDF export, close and reopen.');
+  console.log('PASS: vault, live preview, tasks, wikilinks, backlinks, outline, history, reading view, format, toolbar, rename, search, quick switcher, command palette, watcher, PDF export, close and reopen.');
 } catch (error) {
   try { const page = await app?.firstWindow(); await page?.screenshot({ path: path.join(output, 'failure.png') }); console.error(await page?.locator('body').innerText()); } catch { /* the app may have exited */ }
   throw error;

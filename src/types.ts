@@ -3,7 +3,7 @@ export type Note = { path: string; text: string };
 export type Theme = 'system' | 'light' | 'dark';
 export type Mode = 'live' | 'source' | 'reading';
 export type VaultInfo = { vault: { path: string; name: string } | null; recent: string[]; theme: Theme; platform: string };
-export type PdfOptions = { pageSize: 'Letter' | 'A4' | 'Legal'; margin: 'default' | 'minimal' | 'none'; landscape: boolean; includeTitle: boolean };
+export type PdfOptions = { pageSize: 'Letter' | 'A4' | 'Legal'; margin: number; landscape: boolean; includeTitle: boolean; font: string; size: number; lineHeight: number; align: 'left' | 'center' | 'right' | 'justify'; indent: boolean; pageNumbers: boolean };
 
 declare global {
   interface Window {

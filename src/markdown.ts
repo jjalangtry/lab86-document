@@ -1,6 +1,7 @@
 import { Marked, type TokenizerAndRendererExtension, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Note } from './types';
+import { stripFrontmatter } from './frontmatter';
 
 export const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
 export const isImagePath = (path: string) => IMAGE_EXTENSION.test(path);
@@ -102,8 +103,21 @@ const highlight: TokenizerAndRendererExtension = {
   renderer(token) { return `<mark>${this.parser.parseInline(token.tokens || [])}</mark>`; },
 };
 
-export function renderMarkdown(text: string, notePath: string, resolve: Resolver): string {
-  const marked = new Marked({ gfm: true, breaks: false, extensions: [wikilink(resolve, notePath), tag, highlight] });
+// <p align="center">…</p> and <h1 align="right">…</h1> blocks keep inline Markdown inside them.
+const alignedBlock: TokenizerAndRendererExtension = {
+  name: 'alignedBlock', level: 'block',
+  start(src) { const match = /^<(?:p|h[1-6]|div|center)\b/m.exec(src); return match ? match.index : undefined; },
+  tokenizer(src) {
+    const match = /^<(p|h[1-6]|div|center)(?:\s+align="(left|center|right|justify)")?\s*>([\s\S]*?)<\/\1>[ \t]*(?:\n+|$)/.exec(src);
+    if (!match) return undefined;
+    return { type: 'alignedBlock', raw: match[0], tag: /^h[1-6]$/.test(match[1]) ? match[1] : 'p', align: match[2] || (match[1] === 'center' ? 'center' : 'left'), tokens: this.lexer.inlineTokens(match[3].trim()) };
+  },
+  renderer(token) { return `<${token.tag} style="text-align:${token.align}">${this.parser.parseInline(token.tokens || [])}</${token.tag}>\n`; },
+};
+
+export function renderMarkdown(source: string, notePath: string, resolve: Resolver): string {
+  const text = stripFrontmatter(source);
+  const marked = new Marked({ gfm: true, breaks: false, extensions: [alignedBlock, wikilink(resolve, notePath), tag, highlight] });
   marked.use({
     renderer: {
       link(token: Tokens.Link) {
@@ -136,16 +150,22 @@ export type Heading = { level: number; text: string; line: number };
 export function outline(text: string): Heading[] {
   const headings: Heading[] = [];
   let fenced = false;
-  text.split('\n').forEach((raw, line) => {
+  const skip = text.length - stripFrontmatter(text).length;
+  const offset = skip ? text.slice(0, skip).split('\n').length - 1 : 0;
+  stripFrontmatter(text).split('\n').forEach((raw, index) => {
+    const line = index + offset;
     if (/^\s*(```|~~~)/.test(raw)) { fenced = !fenced; return; }
     if (fenced) return;
+    const aligned = /^<h([1-6])(?:\s+align="\w+")?>([\s\S]*)<\/h\1>\s*$/.exec(raw);
+    if (aligned) { headings.push({ level: Number(aligned[1]), text: aligned[2].replace(/<[^>]+>/g, '').replace(/[*_`~]/g, ''), line }); return; }
     const match = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(raw);
     if (match) headings.push({ level: match[1].length, text: match[2].replace(/\[\[([^\]|]*)\|?([^\]]*)\]\]/g, (_m, a, b) => b || a).replace(/[*_`~]/g, ''), line });
   });
   return headings;
 }
 
-export function countWords(text: string) {
+export function countWords(source: string) {
+  const text = stripFrontmatter(source).replace(/<\/?[a-z][^>]*>/gi, '');
   const words = text.match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
   return { words, characters: text.length };
 }

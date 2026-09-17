@@ -81,12 +81,16 @@ test('PDF export inlines vault images and escapes the title', async () => {
     assert.ok(inlined.includes('src="data:image/png;base64,AQID"'));
     assert.ok(!inlined.includes('vault://'));
     assert.equal((inlined.match(/src=""/g) || []).length, 2);
-    const html = printDocument('<Title> & "quotes"', inlined, { pageSize: 'A4', margin: 'minimal', landscape: true });
+    const html = printDocument('<Title> & "quotes"', inlined, { pageSize: 'A4', margin: 0.5, landscape: true, font: 'Georgia"; x', size: 12, lineHeight: 2, align: 'justify', indent: true });
     assert.ok(html.includes('<title>&lt;Title&gt; &amp; &quot;quotes&quot;</title>'));
     assert.ok(html.includes('size: A4 landscape; margin: 0.5in'));
+    assert.ok(html.includes('font-family: "Georgia x", serif; font-size: 12pt; line-height: 2;'));
+    assert.ok(html.includes('text-align: justify;'));
+    assert.ok(html.includes('text-indent: 2em'));
     assert.ok(html.includes('class="print-title"'));
     assert.ok(!printDocument('T', '', { includeTitle: false }).includes('class="print-title"'));
-    assert.deepEqual(printOptions({ pageSize: 'Tabloid', margin: 'huge' }), { pageSize: 'Letter', margin: 1, landscape: false, includeTitle: true });
+    const defaults = printOptions({ pageSize: 'Tabloid', margin: 'huge', size: 900, align: 'sideways' });
+    assert.deepEqual(defaults, { pageSize: 'Letter', margin: 1, landscape: false, includeTitle: true, font: '', size: 12, lineHeight: 1.5, align: 'left', indent: false, pageNumbers: false });
   });
 });
 

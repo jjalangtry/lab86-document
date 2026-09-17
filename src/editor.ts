@@ -1,4 +1,4 @@
-import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, Prec, StateField, type Extension } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
@@ -8,6 +8,7 @@ import { autocompletion, type CompletionContext } from '@codemirror/autocomplete
 import type { InlineContext, MarkdownConfig } from '@lezer/markdown';
 import { tags as t } from '@lezer/highlight';
 import { isImagePath, vaultUrl } from './markdown';
+import { formatOf, formatSummary, parseFrontmatter } from './frontmatter';
 import type { Mode } from './types';
 import { tabIndentation } from './tab-indentation';
 
@@ -19,7 +20,11 @@ export type EditorHost = {
   openTag: (tag: string) => void;
   saveImage: (file: File) => Promise<string | null>;
   onChange: (text: string) => void;
+  openFormat: () => void;
 };
+
+const ALIGNED_BLOCK = /^<(p|h[1-6]|div|center)(?:\s+align="(left|center|right|justify)")?\s*>([\s\S]*?)<\/\1>\s*$/;
+const INLINE_TAGS = new Set(['u', 'sub', 'sup', 'mark', 'ins', 'del', 's', 'small']);
 
 // Lezer extension for [[wikilinks]], ![[embeds]] and #tags.
 const LBRACKET = 91, RBRACKET = 93, BANG = 33, HASH = 35, NEWLINE = 10;
@@ -110,6 +115,35 @@ class ImageWidget extends WidgetType {
   }
 }
 
+class FrontmatterWidget extends WidgetType {
+  constructor(readonly summary: string, readonly host: () => EditorHost) { super(); }
+  eq(other: FrontmatterWidget) { return other.summary === this.summary; }
+  ignoreEvent() { return false; }
+  toDOM() {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'cm-frontmatter'; button.textContent = this.summary; button.title = 'Document format';
+    button.addEventListener('mousedown', event => event.preventDefault());
+    button.addEventListener('click', event => { event.preventDefault(); this.host().openFormat(); });
+    return button;
+  }
+}
+// The frontmatter block shows as a format summary unless the cursor is inside it.
+function frontmatterField(host: () => EditorHost) {
+  const build = (state: EditorState) => {
+    const head = state.doc.sliceString(0, Math.min(state.doc.length, 20000));
+    const block = parseFrontmatter(head);
+    if (!block) return Decoration.none;
+    const end = Math.max(0, block.end - 1);
+    if (state.selection.ranges.some(r => r.from <= end && r.to >= 0)) return Decoration.none;
+    return Decoration.set([Decoration.replace({ widget: new FrontmatterWidget(formatSummary(formatOf(head)), host), block: true }).range(0, end)]);
+  };
+  return StateField.define<DecorationSet>({
+    create: build,
+    update(value, transaction) { return transaction.docChanged || transaction.selection ? build(transaction.state) : value; },
+    provide: field => EditorView.decorations.from(field),
+  });
+}
+
 function livePreview(host: () => EditorHost) {
   return ViewPlugin.fromClass(class {
     decorations: DecorationSet;
@@ -131,6 +165,7 @@ function livePreview(host: () => EditorHost) {
         }
       };
       const spaceAfter = (pos: number) => (state.sliceDoc(pos, pos + 1) === ' ' ? 1 : 0);
+      const openTags: { name: string; from: number; to: number }[] = [];
       for (const { from, to } of view.visibleRanges) {
         syntaxTree(state).iterate({ from, to, enter: node => {
           const name = node.name;
@@ -191,6 +226,7 @@ function livePreview(host: () => EditorHost) {
             const mark = node.node.getChild('ListMark');
             if (!mark) return;
             const line = doc.lineAt(mark.from);
+            add(line.from, line.from, Decoration.line({ class: 'cm-list-line' }));
             const task = node.node.getChild('Task')?.getChild('TaskMarker');
             if (task && task.from > mark.to) add(line.from, line.from, Decoration.line({ class: `cm-task-line${/x/i.test(state.sliceDoc(task.from, task.to)) ? ' is-checked' : ''}` }));
             if (touches(line.from, line.to)) return;
@@ -225,6 +261,37 @@ function livePreview(host: () => EditorHost) {
             return;
           }
           if (name === 'Table') { lineClass(node.from, node.to, 'cm-table'); return; }
+          if (name === 'HTMLBlock') {
+            const match = ALIGNED_BLOCK.exec(state.sliceDoc(node.from, node.to));
+            if (!match) return;
+            const align = match[2] || (match[1] === 'center' ? 'center' : 'left');
+            lineClass(node.from, node.to, `cm-align-${align}`);
+            if (/^h[1-6]$/.test(match[1])) lineClass(node.from, node.to, `cm-heading cm-h${match[1][1]}`);
+            const revealed = touchesLines(node.from, node.to);
+            const openLength = match[0].indexOf('>') + 1;
+            const closeStart = node.from + match[0].lastIndexOf('</');
+            if (!revealed) { hide(node.from, node.from + openLength); hide(closeStart, node.to); }
+            // Inline HTML inside the block is not parsed by Lezer, so tag pairs are found by text.
+            for (const pair of match[3].matchAll(/<([a-z]+)>([\s\S]*?)<\/\1>/gi)) {
+              if (!INLINE_TAGS.has(pair[1].toLowerCase()) || pair.index === undefined) continue;
+              const start = node.from + openLength + pair.index, openEnd = start + pair[1].length + 2, closeFrom = start + pair[0].length - pair[1].length - 3;
+              add(openEnd, closeFrom, Decoration.mark({ class: `cm-html cm-html-${pair[1].toLowerCase()}` }));
+              if (!revealed) { hide(start, openEnd); hide(closeFrom, start + pair[0].length); }
+            }
+            return false;
+          }
+          if (name === 'HTMLTag') {
+            const tag = /^<(\/?)([a-z]+)\s*\/?>$/i.exec(state.sliceDoc(node.from, node.to));
+            if (!tag || !INLINE_TAGS.has(tag[2].toLowerCase())) return;
+            const tagName = tag[2].toLowerCase();
+            if (!tag[1]) { openTags.push({ name: tagName, from: node.from, to: node.to }); return; }
+            const index = openTags.map(t => t.name).lastIndexOf(tagName);
+            if (index < 0) return;
+            const open = openTags.splice(index, 1)[0];
+            add(open.to, node.from, Decoration.mark({ class: `cm-html cm-html-${tagName}` }));
+            if (!touches(open.from, node.to)) { hide(open.from, open.to); hide(node.from, node.to); }
+            return;
+          }
           return;
         } });
       }
@@ -233,16 +300,37 @@ function livePreview(host: () => EditorHost) {
   }, { decorations: plugin => plugin.decorations });
 }
 
-function wrapSelection(mark: string) {
+function wrapSelection(open: string, close = open) {
   return (view: EditorView) => {
     view.dispatch(view.state.changeByRange(range => {
-      const { from, to } = range, n = mark.length;
-      const before = view.state.sliceDoc(from - n, from), after = view.state.sliceDoc(to, to + n);
-      if (from - n >= 0 && before === mark && after === mark) return { changes: [{ from: from - n, to: from }, { from: to, to: to + n }], range: EditorSelection.range(from - n, to - n) };
+      const { from, to } = range, a = open.length, b = close.length;
+      const before = view.state.sliceDoc(from - a, from), after = view.state.sliceDoc(to, to + b);
+      if (from - a >= 0 && before === open && after === close) return { changes: [{ from: from - a, to: from }, { from: to, to: to + b }], range: EditorSelection.range(from - a, to - a) };
       const text = view.state.sliceDoc(from, to);
-      if (text.length >= n * 2 && text.startsWith(mark) && text.endsWith(mark)) return { changes: { from, to, insert: text.slice(n, -n) }, range: EditorSelection.range(from, to - n * 2) };
-      return { changes: [{ from, insert: mark }, { from: to, insert: mark }], range: EditorSelection.range(from + n, to + n) };
+      if (text.length >= a + b && text.startsWith(open) && text.endsWith(close)) return { changes: { from, to, insert: text.slice(a, text.length - b) }, range: EditorSelection.range(from, to - a - b) };
+      return { changes: [{ from, insert: open }, { from: to, insert: close }], range: EditorSelection.range(from + a, to + a) };
     }));
+    return true;
+  };
+}
+// Wraps the selected lines in <p align> or <hN align> tags. Left alignment removes the tags.
+function alignLines(value: 'left' | 'center' | 'right' | 'justify') {
+  return (view: EditorView) => {
+    const changes: { from: number; to: number; insert: string }[] = [];
+    const lines = new Set<number>();
+    for (const range of view.state.selection.ranges) for (let n = view.state.doc.lineAt(range.from).number; n <= view.state.doc.lineAt(range.to).number; n++) lines.add(n);
+    for (const n of lines) {
+      const line = view.state.doc.line(n);
+      if (!line.text.trim() || /^\s*([-*+]|\d+[.)])\s/.test(line.text) || /^\s*(>|```|\|)/.test(line.text)) continue;
+      const wrapped = /^<(p|h[1-6])(?:\s+align="\w+")?>([\s\S]*)<\/\1>\s*$/.exec(line.text);
+      const heading = /^(#{1,6})\s+(.*)$/.exec(line.text);
+      const tag = wrapped ? wrapped[1] : heading ? `h${heading[1].length}` : 'p';
+      const inner = wrapped ? wrapped[2] : heading ? heading[2] : line.text;
+      const plain = tag === 'p' ? inner : `${'#'.repeat(Number(tag[1]))} ${inner}`;
+      const insert = value === 'left' ? plain : `<${tag} align="${value}">${inner}</${tag}>`;
+      if (insert !== line.text) changes.push({ from: line.from, to: line.to, insert });
+    }
+    if (changes.length) view.dispatch({ changes });
     return true;
   };
 }
@@ -272,14 +360,14 @@ function toggleLine(prefix: RegExp, insert: string) {
   };
 }
 export const commands = {
-  bold: wrapSelection('**'), italic: wrapSelection('*'), strike: wrapSelection('~~'), code: wrapSelection('`'), highlight: wrapSelection('=='), link: insertLink,
+  bold: wrapSelection('**'), italic: wrapSelection('*'), underline: wrapSelection('<u>', '</u>'), strike: wrapSelection('~~'), code: wrapSelection('`'), highlight: wrapSelection('=='), link: insertLink, align: alignLines,
   bullet: toggleLine(/^\s*[-*+]\s+(?!\[)/, '- '), task: toggleLine(/^\s*[-*+]\s+\[[ xX]\]\s*/, '- [ ] '), number: toggleLine(/^\s*\d+[.)]\s+/, '1. '), quote: toggleLine(/^\s*>\s?/, '> '),
   heading: (level: number) => (view: EditorView) => {
     const changes = view.state.selection.ranges.map(range => {
       const line = view.state.doc.lineAt(range.from);
       const current = /^(#{1,6})\s+/.exec(line.text);
       const currentLevel = current ? current[1].length : 0;
-      const insert = currentLevel === level ? '' : '#'.repeat(level) + ' ';
+      const insert = currentLevel === level || level === 0 ? '' : '#'.repeat(level) + ' ';
       return { from: line.from, to: line.from + (current ? current[0].length : 0), insert };
     });
     view.dispatch({ changes });
@@ -336,7 +424,7 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
   const modeCompartment = new Compartment();
   const states = new Map<string, EditorState>();
   let current: string | null = null;
-  const modeExtension = (mode: Exclude<Mode, 'reading'>): Extension => mode === 'live' ? livePreview(host) : [];
+  const modeExtension = (mode: Exclude<Mode, 'reading'>): Extension => mode === 'live' ? [livePreview(host), frontmatterField(host)] : [];
   const extensions: Extension = [
     history(),
     drawSelection(),
@@ -352,7 +440,8 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
     EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', 'aria-label': 'Note text' }),
     Prec.highest(keymap.of([
       { key: 'Enter', run: endEmptyListItem },
-      { key: 'Mod-b', run: commands.bold }, { key: 'Mod-i', run: commands.italic }, { key: 'Mod-k', run: commands.link },
+      { key: 'Mod-b', run: commands.bold }, { key: 'Mod-i', run: commands.italic }, { key: 'Mod-u', run: commands.underline }, { key: 'Mod-k', run: commands.link },
+      { key: 'Mod-Alt-l', run: commands.align('left') }, { key: 'Mod-Alt-e', run: commands.align('center') }, { key: 'Mod-Alt-r', run: commands.align('right') }, { key: 'Mod-Alt-j', run: commands.align('justify') },
       { key: 'Mod-Shift-x', run: commands.strike }, { key: 'Mod-`', run: commands.code }, { key: 'Mod-Shift-h', run: commands.highlight },
       { key: 'Mod-l', run: commands.task }, { key: 'Mod-Shift-8', run: commands.bullet }, { key: 'Mod-Shift-7', run: commands.number }, { key: 'Mod-Shift-.', run: commands.quote },
     ])),

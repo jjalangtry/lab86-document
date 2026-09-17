@@ -23,6 +23,15 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 - Click the note title to rename the note. Links in other notes update with the new name.
 - Notes save as you type. There is no save button.
 
+## Format an essay
+
+- Open **Format** in the right sidebar to set the font, the font size, the line spacing, the alignment, the first-line indent, the paper size, the margins, and page numbers.
+- The settings are stored at the top of the note as YAML frontmatter. Other Markdown tools keep them. The live preview shows them as one line. Click that line to open the Format pane.
+- Any font installed on the computer works. Select **Other font…** and type its name.
+- The formatting toolbar under the note header has bold, italic, underline, strikethrough, highlight, links, lists, quotes, code, alignment, and images. Hide it from the note menu.
+- Underline uses `<u>` tags. A centered or right-aligned paragraph uses `<p align="center">` tags. Both are normal Markdown with inline HTML. The live preview hides the tags.
+- The PDF export uses the font, size, spacing, alignment, indent, paper, margins, and page numbers of the note.
+
 ## Navigate
 
 - The left sidebar shows the files and the search. Right-click a file or folder for more actions.
@@ -44,7 +53,8 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 | Left sidebar | Ctrl/Cmd+Shift+L |
 | Right sidebar | Ctrl/Cmd+Shift+R |
 | Back / Forward | Ctrl+Alt+Left / Right |
-| Bold / Italic | Ctrl/Cmd+B / I |
+| Bold / Italic / Underline | Ctrl/Cmd+B / I / U |
+| Align left / center / right / justify | Ctrl/Cmd+Alt+L / E / R / J |
 | Link | Ctrl/Cmd+K |
 | Task list | Ctrl/Cmd+L |
 | Export to PDF | Ctrl/Cmd+Shift+E |

@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Vault, isImage } = require('./vault.cjs');
-const { inlineImages, printDocument } = require('./export.cjs');
+const { inlineImages, printDocument, printOptions } = require('./export.cjs');
 const { TreeWatcher } = require('./watcher.cjs');
 
 if (process.env.LABDOC_TEST_DATA) app.setPath('userData', process.env.LABDOC_TEST_DATA);
@@ -68,13 +68,19 @@ async function failedClose(message = 'The editor did not respond. Recent edits m
   } finally { closeDialogOpen = false; }
 }
 async function pdfBuffer(title, body, options) {
-  const html = printDocument(title, await inlineImages(body, requireVault()), options);
+  const settings = printOptions(options);
+  const html = printDocument(title, await inlineImages(body, requireVault()), settings);
   const print = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'print' } });
   print.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   try {
     await print.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     await print.webContents.executeJavaScript('Promise.all([document.fonts.ready, ...Array.from(document.images, i => i.decode().catch(() => {}))])');
-    return await print.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true });
+    return await print.webContents.printToPDF({
+      printBackground: true, preferCSSPageSize: true,
+      displayHeaderFooter: settings.pageNumbers,
+      headerTemplate: '<span></span>',
+      footerTemplate: `<div style="width:100%;text-align:center;font-family:${settings.font ? settings.font.replace(/[^\w -]/g, '') + ',' : ''}serif;font-size:10px;color:#333"><span class="pageNumber"></span></div>`,
+    });
   } finally { print.destroy(); }
 }
 

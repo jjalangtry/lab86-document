@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, FilePlus, Files, FolderOpen, Link2, ListTree, Moon, Monitor, PanelLeft, PanelRight, Search as SearchIcon, Settings2, Sun, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronDown, FilePlus, Files, FolderOpen, Link2, ListTree, Moon, Monitor, PanelLeft, PanelRight, Search as SearchIcon, Settings2, SlidersHorizontal, Sun, X } from 'lucide-react';
 import type { NoteEditor } from './editor';
 import { commands as editorCommands } from './editor';
 import { backlinks as findBacklinks, countWords, folderOf, fuzzyScore, isNotePath, makeResolver, noteName, noteStem, outline, renderMarkdown, searchNotes, parseWiki, WIKI_PATTERN } from './markdown';
 import { NoteView } from './NoteView';
+import { DEFAULT_FORMAT, applyFormat, formatOf, parseFrontmatter, type DocumentFormat } from './frontmatter';
 import { Palette, type PaletteItem } from './Palette';
-import { BacklinksPane, OutlinePane } from './RightPanel';
+import { BacklinksPane, FormatPane, OutlinePane } from './RightPanel';
 import { FileTree, SearchPane, type TreeActions } from './Sidebar';
 import type { Entry, Mode, Note, PdfOptions, Theme, VaultInfo } from './types';
 import { Dialog, IconButton, Menu, MenuCheck, MenuItem, MenuLabel, MenuSeparator, TooltipProvider, isMac, keys } from './ui';
@@ -28,13 +29,14 @@ export default function App() {
   const [left, setLeft] = useState(stored('document.left', '1') === '1');
   const [right, setRight] = useState(stored('document.right', '0') === '1');
   const [leftTab, setLeftTab] = useState<'files' | 'search'>('files');
-  const [rightTab, setRightTab] = useState<'outline' | 'backlinks'>('outline');
+  const [rightTab, setRightTab] = useState<'outline' | 'backlinks' | 'format'>('outline');
+  const [toolbar, setToolbar] = useState(stored('document.toolbar', '1') === '1');
   const [leftWidth, setLeftWidth] = useState(Math.min(480, Math.max(200, Number(stored('document.leftWidth', '260')) || 260)));
   const [query, setQuery] = useState('');
   const [palette, setPalette] = useState<null | 'files' | 'commands'>(null);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [pdfOpen, setPdfOpen] = useState(false);
-  const [pdf, setPdf] = useState<PdfOptions>({ pageSize: 'Letter', margin: 'default', landscape: false, includeTitle: true });
+  const [pdf, setPdf] = useState<PdfOptions>({ ...DEFAULT_FORMAT, pageSize: 'Letter', landscape: false, includeTitle: true });
   const [confirmTrash, setConfirmTrash] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -61,6 +63,7 @@ export default function App() {
   const resolve = useMemo(() => makeResolver(allPaths), [allPaths]);
   const headings = useMemo(() => outline(text), [text]);
   const counts = useMemo(() => countWords(text), [text]);
+  const format = useMemo(() => formatOf(text), [text]);
   const links = useMemo(() => open ? findBacklinks(open, notes, resolve) : [], [open, notes, resolve]);
   const hits = useMemo(() => searchNotes(query, notes), [query, notes]);
   const fail = useCallback((e: unknown) => setError(errorMessage(e)), []);
@@ -93,6 +96,7 @@ export default function App() {
   }, []);
   useEffect(() => { localStorage.setItem('document.left', left ? '1' : '0'); }, [left]);
   useEffect(() => { localStorage.setItem('document.right', right ? '1' : '0'); }, [right]);
+  useEffect(() => { localStorage.setItem('document.toolbar', toolbar ? '1' : '0'); }, [toolbar]);
   useEffect(() => { localStorage.setItem('document.leftWidth', String(leftWidth)); }, [leftWidth]);
   useEffect(() => { if (vaultPath) localStorage.setItem(`document.expanded:${vaultPath}`, JSON.stringify([...expanded])); }, [expanded, vaultPath]);
   useEffect(() => {
@@ -245,8 +249,24 @@ export default function App() {
       return path;
     } catch (e) { fail(e); return null; }
   }, [fail, refresh]);
-  const hostRef = useRef({ resolve: (target: string) => resolve(target, openRef.current || undefined), noteNames: () => notesRef.current.map(n => noteStem(n.path)).sort(), openLink, openExternal, openTag, saveImage, onChange });
-  hostRef.current = { resolve: (target: string) => resolve(target, openRef.current || undefined), noteNames: () => notesRef.current.map(n => noteStem(n.path)).sort(), openLink, openExternal, openTag, saveImage, onChange };
+  // Format changes rewrite only the frontmatter block through the editor, so undo works.
+  const setFormat = useCallback((patch: Partial<DocumentFormat>) => {
+    const view = editorRef.current?.view;
+    if (!view) return;
+    const current = view.state.doc.toString();
+    const next = applyFormat(current, patch);
+    if (next === current) return;
+    const oldEnd = parseFrontmatter(current)?.end ?? 0, newEnd = parseFrontmatter(next)?.end ?? 0;
+    view.dispatch({ changes: { from: 0, to: oldEnd, insert: next.slice(0, newEnd) } });
+  }, []);
+  const openFormat = useCallback(() => { setRight(true); setRightTab('format'); }, []);
+  const openPdf = useCallback(() => {
+    const current = formatOf(editorRef.current?.text() ?? '');
+    setPdf(previous => ({ ...previous, pageSize: current.paper, margin: current.margin, pageNumbers: current.pageNumbers }));
+    setPdfOpen(true);
+  }, []);
+  const hostRef = useRef({ resolve: (target: string) => resolve(target, openRef.current || undefined), noteNames: () => notesRef.current.map(n => noteStem(n.path)).sort(), openLink, openExternal, openTag, saveImage, onChange, openFormat });
+  hostRef.current = { resolve: (target: string) => resolve(target, openRef.current || undefined), noteNames: () => notesRef.current.map(n => noteStem(n.path)).sort(), openLink, openExternal, openTag, saveImage, onChange, openFormat };
   const host = useCallback(() => hostRef.current, []);
 
   const go = useCallback((delta: number) => {
@@ -266,7 +286,8 @@ export default function App() {
     try {
       await flush();
       const value = notesRef.current.find(n => n.path === path)?.text ?? '';
-      const result = await api.exportPdf(noteName(path), renderMarkdown(value, path, resolve), pdf);
+      const current = formatOf(value);
+      const result = await api.exportPdf(noteName(path), renderMarkdown(value, path, resolve), { ...pdf, font: current.font, size: current.size, lineHeight: current.lineHeight, align: current.align, indent: current.indent });
       if (result) setToast(`Exported ${result.fileName}`);
       setPdfOpen(false);
     } catch (e) { fail(e); } finally { setBusy(false); }
@@ -299,13 +320,17 @@ export default function App() {
     { id: 'backlinks', name: 'Show backlinks', run: () => { setRight(true); setRightTab('backlinks'); } },
     { id: 'back', name: 'Back', hint: isMac ? '⌃⌥←' : 'Ctrl+Alt+←', run: () => go(-1) },
     { id: 'forward', name: 'Forward', hint: isMac ? '⌃⌥→' : 'Ctrl+Alt+→', run: () => go(1) },
-    { id: 'export-pdf', name: 'Export to PDF', hint: keys('Mod+Shift+E'), run: () => setPdfOpen(true), when: !!open },
+    { id: 'export-pdf', name: 'Export to PDF', hint: keys('Mod+Shift+E'), run: openPdf, when: !!open },
+    { id: 'format', name: 'Document format', run: openFormat, when: !!open },
+    { id: 'toggle-toolbar', name: toolbar ? 'Hide formatting toolbar' : 'Show formatting toolbar', run: () => setToolbar(v => !v) },
     { id: 'insert-image', name: 'Insert image from computer', run: () => void insertImage(), when: !!open && mode !== 'reading' },
     { id: 'rename', name: 'Rename note', run: () => setFocusTitle(n => n + 1), when: !!open },
     { id: 'reveal', name: 'Show in file manager', run: () => void (open ? api.reveal(open) : api.revealVault()).catch(fail) },
     { id: 'delete', name: 'Delete note', run: () => setConfirmTrash(open), when: !!open },
     { id: 'bold', name: 'Bold', hint: keys('Mod+B'), run: editorCommand(editorCommands.bold), when: !!open && mode !== 'reading' },
     { id: 'italic', name: 'Italic', hint: keys('Mod+I'), run: editorCommand(editorCommands.italic), when: !!open && mode !== 'reading' },
+    { id: 'underline', name: 'Underline', hint: keys('Mod+U'), run: editorCommand(editorCommands.underline), when: !!open && mode !== 'reading' },
+    ...(['left', 'center', 'right', 'justify'] as const).map(value => ({ id: `align-${value}`, name: `Align ${value}`, hint: keys(`Mod+Alt+${{ left: 'L', center: 'E', right: 'R', justify: 'J' }[value]}`), run: editorCommand(editorCommands.align(value)), when: !!open && mode !== 'reading' })),
     { id: 'strike', name: 'Strikethrough', hint: keys('Mod+Shift+X'), run: editorCommand(editorCommands.strike), when: !!open && mode !== 'reading' },
     { id: 'highlight', name: 'Highlight', hint: keys('Mod+Shift+H'), run: editorCommand(editorCommands.highlight), when: !!open && mode !== 'reading' },
     { id: 'code', name: 'Inline code', hint: keys('Mod+`'), run: editorCommand(editorCommands.code), when: !!open && mode !== 'reading' },
@@ -349,7 +374,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const meta = isMac ? event.metaKey : event.ctrlKey;
-      if (!meta) return;
+      if (!meta || event.altKey) return;
       const key = event.key.toLowerCase();
       const run = (id: string) => { event.preventDefault(); commandsRef.current.find(c => c.id === id)?.run(); };
       if (key === 'o' && !event.shiftKey) run('quick-switcher');
@@ -360,6 +385,7 @@ export default function App() {
       else if (key === 'l' && event.shiftKey) run('toggle-left');
       else if (key === 'r' && event.shiftKey) run('toggle-right');
       else if (key === 'e' && event.shiftKey) { if (open) run('export-pdf'); }
+      else if (key === 'u' && !event.shiftKey && mode !== 'reading') { /* the editor handles underline */ }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -450,9 +476,10 @@ export default function App() {
         </div>
       </div>
       {error && <div className="error-banner" role="alert"><span>{error}</span><button type="button" onClick={() => void flush().then(() => setError('')).catch(() => {})}>Retry</button><button type="button" className="icon-button small" aria-label="Dismiss" onClick={() => setError('')}><X size={15} /></button></div>}
-      {open ? <NoteView path={open} text={text} mode={mode} resolve={resolve} host={host} editorRef={editorRef} articleRef={articleRef} focusTitle={focusTitle} justRenamed={renamedRef.current === open}
+      {open ? <NoteView path={open} text={text} mode={mode} resolve={resolve} format={format} toolbar={toolbar} host={host} editorRef={editorRef} articleRef={articleRef} focusTitle={focusTitle} justRenamed={renamedRef.current === open}
         onRename={name => renameEntry(open, name)} onToggleReading={() => setMode(m => m === 'reading' ? editModeRef.current : 'reading')} onToggleSource={() => setMode(m => m === 'source' ? 'live' : 'source')}
-        onExport={() => setPdfOpen(true)} onReveal={() => void api.reveal(open).catch(fail)} onTrash={() => setConfirmTrash(open)} onOpenLink={openLink} onOpenTag={openTag} onOpenExternal={openExternal} />
+        onToggleToolbar={() => setToolbar(v => !v)} onOpenFormat={openFormat} onInsertImage={() => void insertImage()}
+        onExport={openPdf} onReveal={() => void api.reveal(open).catch(fail)} onTrash={() => setConfirmTrash(open)} onOpenLink={openLink} onOpenTag={openTag} onOpenExternal={openExternal} />
         : <div className="empty-state">
           <p className="empty-title">No note is open</p>
           <div className="empty-actions">
@@ -468,10 +495,12 @@ export default function App() {
       <div className="sidebar-tabs">
         <IconButton label="Outline" active={rightTab === 'outline'} onClick={() => setRightTab('outline')}><ListTree size={17} /></IconButton>
         <IconButton label="Backlinks" active={rightTab === 'backlinks'} onClick={() => setRightTab('backlinks')}><Link2 size={17} /></IconButton>
+        <IconButton label="Format" active={rightTab === 'format'} onClick={() => setRightTab('format')}><SlidersHorizontal size={17} /></IconButton>
         <span className="sidebar-tabs-space" />
         <IconButton label={`Hide right sidebar (${keys('Mod+Shift+R')})`} onClick={() => setRight(false)}><PanelRight size={17} /></IconButton>
       </div>
       {!open ? <div className="pane"><p className="pane-empty">Open a note to see its {rightTab}.</p></div>
+        : rightTab === 'format' ? <FormatPane format={format} onChange={setFormat} onReset={() => setFormat(DEFAULT_FORMAT)} />
         : rightTab === 'outline' ? <OutlinePane headings={headings} onSelect={(index, line) => { if (mode === 'reading') articleRef.current?.querySelectorAll('h1,h2,h3,h4,h5,h6')[index]?.scrollIntoView({ block: 'start', behavior: 'smooth' }); else editorRef.current?.goToLine(line); }} />
           : <BacklinksPane links={links} onOpen={(path, line) => void openNote(path, { line })} />}
     </aside>
@@ -481,7 +510,8 @@ export default function App() {
     <Dialog open={pdfOpen} onOpenChange={setPdfOpen} title="Export to PDF" description={open ? noteName(open) : ''}>
       <form className="form" onSubmit={e => { e.preventDefault(); void exportPdf(); }}>
         <label>Page size<select value={pdf.pageSize} onChange={e => setPdf({ ...pdf, pageSize: e.target.value as PdfOptions['pageSize'] })}><option>Letter</option><option>A4</option><option>Legal</option></select></label>
-        <label>Margin<select value={pdf.margin} onChange={e => setPdf({ ...pdf, margin: e.target.value as PdfOptions['margin'] })}><option value="default">Default</option><option value="minimal">Minimal</option><option value="none">None</option></select></label>
+        <label>Margins<select value={pdf.margin} onChange={e => setPdf({ ...pdf, margin: Number(e.target.value) })}>{[...new Set([0, 0.5, 0.75, 1, 1.25, 1.5, pdf.margin])].sort((a, b) => a - b).map(margin => <option key={margin} value={margin}>{margin === 0 ? 'None' : `${margin} in`}</option>)}</select></label>
+        <label className="check"><input type="checkbox" checked={pdf.pageNumbers} onChange={e => setPdf({ ...pdf, pageNumbers: e.target.checked })} />Page numbers</label>
         <label className="check"><input type="checkbox" checked={pdf.landscape} onChange={e => setPdf({ ...pdf, landscape: e.target.checked })} />Landscape</label>
         <label className="check"><input type="checkbox" checked={pdf.includeTitle} onChange={e => setPdf({ ...pdf, includeTitle: e.target.checked })} />Include the note title</label>
         <div className="form-actions"><button type="button" onClick={() => setPdfOpen(false)}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? 'Exporting…' : 'Export'}</button></div>
