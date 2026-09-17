@@ -174,7 +174,7 @@ try {
   await page.keyboard.press(`${mod}+t`);
   await expect(page.getByRole('tab')).toHaveCount(2);
   await expect(page.getByText('No note is open')).toBeVisible();
-  await page.getByRole('treeitem', { name: 'Renamed note' }).click({ modifiers: ['Control'] });
+  await page.getByRole('treeitem', { name: 'Renamed note' }).click({ modifiers: [mod] });
   await expect(page.getByRole('tab')).toHaveCount(3);
   await expect(page.getByRole('tab', { selected: true })).toHaveText(/Renamed note/);
   await page.getByRole('tab', { name: /First note/ }).click();
@@ -220,7 +220,7 @@ try {
   await expect(page.getByTestId('canvas-view')).toBeVisible();
   await page.getByRole('button', { name: 'Add card', exact: true }).click();
   await page.getByRole('textbox', { name: 'Card text' }).fill('A canvas card');
-  await page.locator('.canvas-toolbar').click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('.canvas-node-body')).toContainText('A canvas card');
   await expect.poll(() => read('Untitled.canvas')).toContain('"text": "A canvas card"');
   await page.getByRole('button', { name: 'Files', exact: true }).click();
