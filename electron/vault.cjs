@@ -11,6 +11,8 @@ const IGNORED_FOLDERS = new Set(['node_modules', '.git', '.obsidian', '.trash'])
 const toPosix = value => value.split(path.sep).join('/');
 const isImage = name => IMAGE_EXTENSIONS.test(name);
 const isNote = name => /\.md$/i.test(name);
+const isCanvas = name => /\.canvas$/i.test(name);
+const isEditable = name => isNote(name) || isCanvas(name);
 
 function checkName(name) {
   if (typeof name !== 'string' || !name.trim() || name.length > 255 || INVALID_NAME.test(name) || name.startsWith('.')) {
@@ -49,9 +51,9 @@ class Vault {
         if (entry.name.startsWith('.') || IGNORED_FOLDERS.has(entry.name)) continue;
         const full = path.join(directory, entry.name);
         if (entry.isDirectory()) folders.push({ name: entry.name, path: this.relative(full), kind: 'folder', children: await walk(full) });
-        else if (entry.isFile() && (isNote(entry.name) || isImage(entry.name))) files.push({ name: entry.name, path: this.relative(full), kind: isNote(entry.name) ? 'note' : 'file' });
+        else if (entry.isFile() && (isEditable(entry.name) || isImage(entry.name))) files.push({ name: entry.name, path: this.relative(full), kind: isNote(entry.name) ? 'note' : isCanvas(entry.name) ? 'canvas' : 'file' });
       }
-      const stem = entry => (entry.kind === 'note' ? entry.name.replace(/\.md$/i, '') : entry.name);
+      const stem = entry => (entry.kind === 'note' || entry.kind === 'canvas' ? entry.name.replace(/\.(md|canvas)$/i, '') : entry.name);
       const byName = (a, b) => stem(a).localeCompare(stem(b), undefined, { numeric: true, sensitivity: 'base' });
       return [...folders.sort(byName), ...files.sort(byName)];
     };
@@ -82,7 +84,7 @@ class Vault {
 
   async read(relative) {
     const full = this.resolve(relative);
-    if (!isNote(full)) throw Error('Only Markdown notes can be opened.');
+    if (!isEditable(full)) throw Error('Only Markdown notes and canvases can be opened.');
     const info = await fs.stat(full);
     if (info.size > MAX_NOTE_BYTES) throw Error('This note is too large to open.');
     return fs.readFile(full, 'utf8');
@@ -91,7 +93,7 @@ class Vault {
   // Writes through a temporary file and an atomic rename. Writes to one note run in call order.
   async write(relative, text) {
     const full = this.resolve(relative);
-    if (!isNote(full)) throw Error('Only Markdown notes can be saved.');
+    if (!isEditable(full)) throw Error('Only Markdown notes and canvases can be saved.');
     if (typeof text !== 'string' || Buffer.byteLength(text) > MAX_NOTE_BYTES) throw Error('This note is too large to save.');
     const previous = this.queues.get(full) || Promise.resolve();
     const run = previous.catch(() => {}).then(async () => {
@@ -118,9 +120,10 @@ class Vault {
     throw Error('Could not find a free name.');
   }
 
-  async createNote(folder = '', name = 'Untitled', text = '') {
+  async createNote(folder = '', name = 'Untitled', text = '', extension = '.md') {
     this.resolve(folder);
-    const relative = await this.uniqueName(folder, name, '.md');
+    if (!['.md', '.canvas'].includes(extension)) throw Error('Unsupported file type.');
+    const relative = await this.uniqueName(folder, name, extension);
     await this.write(relative, text);
     return relative;
   }
@@ -135,24 +138,26 @@ class Vault {
   async rename(from, to) {
     const source = this.resolve(from), target = this.resolve(to);
     if (source === this.root || target === this.root) throw Error('The vault folder cannot be renamed.');
-    checkName(path.basename(target).replace(/\.md$/i, ''));
-    if (isNote(source) !== isNote(target)) throw Error('A note must keep the .md extension.');
+    checkName(path.basename(target).replace(/\.(md|canvas)$/i, ''));
+    if (isNote(source) !== isNote(target) || isCanvas(source) !== isCanvas(target)) throw Error('A file must keep its extension.');
     if (source !== target && (await this.exists(to))) throw Error('An item with this name exists.');
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.rename(source, target);
     return this.relative(target);
   }
 
-  async saveAttachment(name, data) {
+  async saveAttachment(name, data, folder = 'attachments') {
     const buffer = Buffer.from(data);
     if (!buffer.length || buffer.length > MAX_ATTACHMENT_BYTES) throw Error('The image is too large.');
     const extension = path.extname(name).toLowerCase();
     if (!isImage(extension)) throw Error('Only image files can be attached.');
-    const relative = await this.uniqueName('attachments', path.basename(name, extension), extension);
-    await fs.mkdir(this.resolve('attachments'), { recursive: true });
+    const target = typeof folder === 'string' && folder.trim() ? folder.trim().replace(/^\/+|\/+$/g, '') : 'attachments';
+    for (const part of target.split('/')) checkName(part);
+    const relative = await this.uniqueName(target, path.basename(name, extension), extension);
+    await fs.mkdir(this.resolve(target), { recursive: true });
     await fs.writeFile(this.resolve(relative), buffer);
     return relative;
   }
 }
 
-module.exports = { Vault, checkName, isImage, isNote, toPosix };
+module.exports = { Vault, checkName, isImage, isNote, isCanvas, toPosix };

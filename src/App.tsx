@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, FilePlus, Files, FolderOpen, Hash, Link2, ListTree, Moon, Monitor, PanelLeft, PanelRight, Plus, Search as SearchIcon, Settings2, SlidersHorizontal, Sun, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, CalendarDays, Check, CircleHelp, Command, FilePlus, Files, FolderOpen, Hash, LayoutDashboard, Link2, ListTree, PanelLeft, PanelRight, Plus, Search as SearchIcon, Settings, SlidersHorizontal, Waypoints, X } from 'lucide-react';
 import type { EditorView } from '@codemirror/view';
 import type { NoteEditor } from './editor';
 import { commands as editorCommands } from './editor';
@@ -8,11 +8,15 @@ import { backlinks as findBacklinks, countWords, folderOf, fuzzyScore, isNotePat
 import { NoteView } from './NoteView';
 import { DEFAULT_FORMAT, applyFormat, formatOf, parseFrontmatter, stripFrontmatter, type DocumentFormat } from './frontmatter';
 import { Palette, type PaletteItem } from './Palette';
-import { BacklinksPane, FormatPane, OutlinePane } from './RightPanel';
+import { BacklinksPane, FormatPane, OutgoingLinksPane, OutlinePane, type OutgoingLink } from './RightPanel';
+import { GraphView } from './GraphView';
+import { CanvasView } from './CanvasView';
+import { SettingsDialog } from './SettingsDialog';
+import { fillTemplate, loadSettings, saveSettings, type Settings as AppSettings } from './settings';
 import { SelectionToolbar } from './SelectionToolbar';
-import { FileTree, SearchPane, TagsPane, type TreeActions } from './Sidebar';
+import { BookmarksPane, FileTree, SearchPane, TagsPane, type TreeActions } from './Sidebar';
 import type { Entry, Mode, Note, PdfOptions, Theme, VaultInfo } from './types';
-import { Dialog, IconButton, Menu, MenuCheck, MenuItem, MenuLabel, MenuSeparator, TooltipProvider, isMac, keys } from './ui';
+import { Dialog, IconButton, Menu, MenuItem, MenuLabel, MenuSeparator, TooltipProvider, isMac, keys } from './ui';
 import { VaultPicker } from './VaultPicker';
 
 const api = window.vault;
@@ -22,6 +26,11 @@ const flatten = (entries: Entry[]): string[] => entries.flatMap(entry => entry.k
 const stored = (key: string, fallback: string) => localStorage.getItem(key) ?? fallback;
 type Command = { id: string; name: string; hint?: string; run: () => void; when?: boolean };
 type Tab = { id: number; path: string | null; history: string[]; index: number };
+const GRAPH = 'graph:';
+const tabKind = (path: string | null) => path === null ? 'empty' : path === GRAPH ? 'graph' : path.endsWith('.canvas') ? 'canvas' : 'note';
+const tabTitle = (path: string | null) => path === null ? 'New tab' : path === GRAPH ? 'Graph view' : noteName(path).replace(/\.canvas$/i, '');
+const HELP_URL = 'https://github.com/jjalangtry/lab86-document#readme';
+const APP_VERSION = '0.4.0';
 let nextTabId = 1;
 const blankTab = (): Tab => ({ id: nextTabId++, path: null, history: [], index: -1 });
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -36,11 +45,15 @@ export default function App() {
   const [mode, setModeState] = useState<Mode>(() => (['live', 'source', 'reading'].includes(stored('document.mode', 'live')) ? stored('document.mode', 'live') : 'live') as Mode);
   const [left, setLeft] = useState(stored('document.left', '1') === '1');
   const [right, setRight] = useState(stored('document.right', '0') === '1');
-  const [leftTab, setLeftTab] = useState<'files' | 'search' | 'tags'>('files');
-  const [rightTab, setRightTab] = useState<'outline' | 'backlinks' | 'format'>('outline');
+  const [leftTab, setLeftTab] = useState<'files' | 'search' | 'bookmarks'>('files');
+  const [rightTab, setRightTab] = useState<'backlinks' | 'outgoing' | 'tags' | 'outline' | 'format'>('outline');
+  const [settings, setSettingsState] = useState<AppSettings>(loadSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
   const [leftWidth, setLeftWidth] = useState(Math.min(480, Math.max(200, Number(stored('document.leftWidth', '260')) || 260)));
   const [query, setQuery] = useState('');
-  const [palette, setPalette] = useState<null | 'files' | 'commands'>(null);
+  const [palette, setPalette] = useState<null | 'files' | 'commands' | 'templates' | 'pick'>(null);
+  const pickResolver = useRef<((path: string | null) => void) | null>(null);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [pdfOpen, setPdfOpen] = useState(false);
   const [exportKind, setExportKind] = useState<'pdf' | 'docx'>('pdf');
@@ -71,7 +84,10 @@ export default function App() {
   const vaultPath = info?.vault?.path || '';
   const theme = info?.theme || 'system';
   const current = tabs.find(t => t.id === activeTab) ?? tabs[0];
-  const open = current?.path ?? null;
+  const kind = tabKind(current?.path ?? null);
+  const open = kind === 'note' ? current.path : null;
+  const canvasPath = kind === 'canvas' ? current.path : null;
+  const settingsRef = useRef(settings); settingsRef.current = settings;
   const allPaths = useMemo(() => flatten(tree), [tree]);
   const resolve = useMemo(() => makeResolver(allPaths), [allPaths]);
   const headings = useMemo(() => outline(text), [text]);
@@ -79,13 +95,29 @@ export default function App() {
   const format = useMemo(() => formatOf(text), [text]);
   const links = useMemo(() => open && right && rightTab === 'backlinks' ? findBacklinks(open, notes, resolve) : [], [open, notes, resolve, right, rightTab]);
   const hits = useMemo(() => left && leftTab === 'search' ? searchNotes(query, notes) : [], [query, notes, left, leftTab]);
-  const tags = useMemo(() => left && leftTab === 'tags' ? tagCounts(notes) : [], [notes, left, leftTab]);
+  const tags = useMemo(() => right && rightTab === 'tags' ? tagCounts(notes) : [], [notes, right, rightTab]);
+  const outgoing = useMemo<OutgoingLink[]>(() => {
+    if (!open || !right || rightTab !== 'outgoing') return [];
+    const seen = new Map<string, OutgoingLink>();
+    for (const match of stripFrontmatter(text).matchAll(WIKI_PATTERN)) {
+      const target = parseWiki(match).target;
+      if (!target) continue;
+      const key = target.toLowerCase();
+      const entry = seen.get(key) || { target, resolved: resolve(target, open), count: 0 };
+      entry.count++; seen.set(key, entry);
+    }
+    return [...seen.values()];
+  }, [open, right, rightTab, text, resolve]);
+  const updateSettings = useCallback((patch: Partial<AppSettings>) => setSettingsState(current => { const next = { ...current, ...patch }; saveSettings(next); return next; }), []);
+  useEffect(() => { document.documentElement.style.setProperty('--text-size', `${settings.textSize}px`); }, [settings.textSize]);
+  useEffect(() => { if (vaultPath) localStorage.setItem(`document.bookmarks:${vaultPath}`, JSON.stringify(bookmarks)); }, [bookmarks, vaultPath]);
   const fail = useCallback((e: unknown) => setError(errorMessage(e)), []);
 
   // The notes index in state drives backlinks, tags, and search. Updates from typing are
   // batched so a large vault does not recompute them on every save.
   const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updateNote = useCallback((path: string, value: string, immediate = false) => {
+    if (!isNotePath(path)) return;
     const list = notesRef.current.some(n => n.path === path) ? notesRef.current.map(n => n.path === path ? { path, text: value } : n) : [...notesRef.current, { path, text: value }];
     notesRef.current = list;
     if (immediate) { if (notesTimer.current) clearTimeout(notesTimer.current); notesTimer.current = null; setNotes(list); return; }
@@ -133,7 +165,7 @@ export default function App() {
 
   // Loads a note's text into the view without touching tab history.
   const showPath = useCallback(async (path: string | null) => {
-    if (!path) { openRef.current = null; renamedRef.current = null; setText(''); return; }
+    if (!path || path === GRAPH) { openRef.current = null; renamedRef.current = null; setText(''); return; }
     let value = notesRef.current.find(n => n.path === path)?.text;
     if (value === undefined) { value = await api.read(path); updateNote(path, value, true); }
     openRef.current = path; renamedRef.current = null; setText(value);
@@ -221,7 +253,9 @@ export default function App() {
       try { setExpanded(new Set(JSON.parse(stored(`document.expanded:${next.vault.path}`, '[]')) as string[])); } catch { setExpanded(new Set()); }
       let restored: Tab[] = [];
       let active = 0;
-      if (saved?.paths?.length) { restored = saved.paths.map(path => ({ ...blankTab(), path: path && index.some(n => n.path === path) ? path : null, history: path ? [path] : [], index: path ? 0 : -1 })); active = Math.min(Math.max(0, saved.active), restored.length - 1); }
+      const known = new Set([...flatten(nextTree), GRAPH]);
+      if (saved?.paths?.length) { restored = saved.paths.map(path => ({ ...blankTab(), path: path && known.has(path) ? path : null, history: path && known.has(path) ? [path] : [], index: path && known.has(path) ? 0 : -1 })); active = Math.min(Math.max(0, saved.active), restored.length - 1); }
+      try { setBookmarks((JSON.parse(stored(`document.bookmarks:${next.vault.path}`, '[]')) as string[]).filter(p => known.has(p))); } catch { setBookmarks([]); }
       if (!restored.length) {
         const last = stored(`document.lastOpen:${next.vault.path}`, '');
         const path = last && index.some(n => n.path === last) ? last : null;
@@ -255,7 +289,32 @@ export default function App() {
       return path;
     } catch (e) { fail(e); return null; }
   }, [fail, openNote, refresh, updateNote]);
-  const createNote = useCallback((folder: string) => createNamed(folder ? `${folder}/Untitled` : 'Untitled', true), [createNamed]);
+  const createNote = useCallback((folder?: string) => {
+    const target = folder ?? (settingsRef.current.newNoteLocation === 'current' && openRef.current ? folderOf(openRef.current) : '');
+    return createNamed(target ? `${target}/Untitled` : 'Untitled', true);
+  }, [createNamed]);
+  const createCanvas = useCallback(async () => {
+    try {
+      const folder = settingsRef.current.newNoteLocation === 'current' && openRef.current ? folderOf(openRef.current) : '';
+      const path = await api.createNote(folder, 'Untitled', '{\n\t"nodes": [],\n\t"edges": []\n}\n', '.canvas');
+      await refresh();
+      await openNote(path);
+    } catch (e) { fail(e); }
+  }, [fail, openNote, refresh]);
+  const openGraph = useCallback(async () => {
+    const existing = tabsRef.current.find(t => t.path === GRAPH);
+    if (existing) { await selectTab(existing.id); return; }
+    await openNote(GRAPH, { newTab: true });
+  }, [openNote, selectTab]);
+  const templates = useMemo(() => notes.filter(n => n.path.startsWith(`${settings.templatesFolder}/`)).map(n => n.path).sort(), [notes, settings.templatesFolder]);
+  const insertTemplate = useCallback((path: string) => {
+    const note = notesRef.current.find(n => n.path === path);
+    const editor = editorRef.current;
+    if (!note || !editor || !openRef.current) return;
+    editor.insertText(fillTemplate(note.text, noteName(openRef.current)), parseFrontmatter(editor.text())?.end ?? 0);
+  }, []);
+  const pickNote = useCallback(() => new Promise<string | null>(resolve => { pickResolver.current = resolve; setPaletteQuery(''); setPalette('pick'); }), []);
+  const toggleBookmark = useCallback((path: string) => setBookmarks(list => list.includes(path) ? list.filter(p => p !== path) : [...list, path]), []);
   const createFolder = useCallback(async (folder: string) => {
     try {
       const path = await api.createFolder(folder, 'New folder');
@@ -265,7 +324,7 @@ export default function App() {
     } catch (e) { fail(e); }
   }, [fail, refresh]);
   const openDailyNote = useCallback(async () => {
-    const path = `Daily/${today()}.md`;
+    const path = `${settingsRef.current.dailyFolder ? `${settingsRef.current.dailyFolder}/` : ''}${today()}.md`;
     if (notesRef.current.some(n => n.path === path)) await openNote(path);
     else await createNamed(path, false, `# ${today()}\n\n`);
   }, [createNamed, openNote]);
@@ -287,12 +346,13 @@ export default function App() {
   }, [resolve, updateNote]);
   const remapTabs = useCallback((moved: (path: string) => string) => {
     setTabs(list => list.map(t => ({ ...t, path: t.path ? moved(t.path) : null, history: t.history.map(moved) })));
+    setBookmarks(list => list.map(moved));
   }, []);
   // Renames or moves a note or folder. `target` is the new vault-relative path.
   const relocate = useCallback(async (path: string, target: string) => {
     try {
       if (target === path) return;
-      const note = isNotePath(path);
+      const note = isNotePath(path) || path.endsWith('.canvas');
       await flush();
       const newPath = await api.rename(path, target);
       if (note) {
@@ -312,7 +372,7 @@ export default function App() {
       await refresh();
     } catch (e) { fail(e); await refresh(true).catch(() => {}); }
   }, [fail, flush, refresh, remapTabs, updateLinks, updateNote, vaultPath]);
-  const renameEntry = useCallback((path: string, name: string) => relocate(path, `${folderOf(path) ? `${folderOf(path)}/` : ''}${name}${isNotePath(path) ? '.md' : ''}`), [relocate]);
+  const renameEntry = useCallback((path: string, name: string) => relocate(path, `${folderOf(path) ? `${folderOf(path)}/` : ''}${name}${isNotePath(path) ? '.md' : path.endsWith('.canvas') ? '.canvas' : ''}`), [relocate]);
   const moveEntry = useCallback((path: string, folder: string) => relocate(path, `${folder ? `${folder}/` : ''}${path.split('/').pop()}`), [relocate]);
   const trashEntry = useCallback(async (path: string) => {
     try {
@@ -323,6 +383,7 @@ export default function App() {
       notesRef.current = notesRef.current.filter(n => !gone(n.path)); setNotes(notesRef.current);
       editorRef.current?.forget(path);
       setTabs(list => list.map(t => { const history = t.history.filter(p => !gone(p)); return { ...t, path: t.path && gone(t.path) ? null : t.path, history, index: Math.min(t.index, history.length - 1) }; }));
+      setBookmarks(list => list.filter(p => !gone(p)));
       if (openRef.current && gone(openRef.current)) await showPath(null);
       await refresh();
     } catch (e) { fail(e); }
@@ -339,14 +400,14 @@ export default function App() {
   const openExternal = useCallback((url: string) => { void api.openExternal(url).catch(fail); }, [fail]);
   const saveImage = useCallback(async (file: File) => {
     try {
-      const path = await api.saveAttachment(file.name || `Pasted image ${Date.now()}.png`, new Uint8Array(await file.arrayBuffer()));
+      const path = await api.saveAttachment(file.name || `Pasted image ${Date.now()}.png`, new Uint8Array(await file.arrayBuffer()), settingsRef.current.attachmentsFolder);
       await refresh();
       return path;
     } catch (e) { fail(e); return null; }
   }, [fail, refresh]);
   const insertImage = useCallback(async () => {
     try {
-      const path = await api.importImage();
+      const path = await api.importImage(settingsRef.current.attachmentsFolder);
       if (!path) return;
       await refresh();
       const view = editorRef.current?.view;
@@ -395,12 +456,12 @@ export default function App() {
     const tab = tabsRef.current.find(t => t.id === activeRef.current);
     if (!tab) return;
     let index = tab.index + delta;
-    while (index >= 0 && index < tab.history.length && !notesRef.current.some(n => n.path === tab.history[index])) index += delta;
+    while (index >= 0 && index < tab.history.length && !(tab.history[index] === GRAPH || allPaths.includes(tab.history[index]))) index += delta;
     if (index < 0 || index >= tab.history.length) return;
     const target = index;
     setTabs(list => list.map(t => t.id === tab.id ? { ...t, index: target } : t));
     void openNote(tab.history[target], { push: false });
-  }, [openNote]);
+  }, [allPaths, openNote]);
   const chooseVault = useCallback(async (create: boolean) => { try { await flush().catch(() => {}); const next = await api.chooseVault(create); if (next) await loadVault(next); } catch (e) { fail(e); } }, [fail, flush, loadVault]);
   const exportPdf = useCallback(async () => {
     const path = openRef.current;
@@ -433,6 +494,14 @@ export default function App() {
   const commands: Command[] = [
     { id: 'new-note', name: 'New note', hint: keys('Mod+N'), run: () => void createNote('') },
     { id: 'new-folder', name: 'New folder', run: () => void createFolder('') },
+    { id: 'new-canvas', name: 'Create new canvas', run: () => void createCanvas() },
+    { id: 'graph', name: 'Open graph view', hint: keys('Mod+G'), run: () => void openGraph() },
+    { id: 'insert-template', name: 'Insert template', run: () => { setPaletteQuery(''); setPalette('templates'); }, when: editing },
+    { id: 'bookmark', name: open && bookmarks.includes(open) ? 'Remove bookmark' : 'Bookmark this note', run: () => { if (open) toggleBookmark(open); }, when: !!open },
+    { id: 'bookmarks', name: 'Show bookmarks', run: () => { setLeft(true); setLeftTab('bookmarks'); } },
+    { id: 'outgoing', name: 'Show outgoing links', run: () => { setRight(true); setRightTab('outgoing'); } },
+    { id: 'settings', name: 'Open settings', hint: keys('Mod+,'), run: () => setSettingsOpen(true) },
+    { id: 'help', name: 'Open help', run: () => void api.openExternal(HELP_URL).catch(fail) },
     { id: 'new-tab', name: 'New tab', hint: keys('Mod+T'), run: () => void newTab() },
     { id: 'close-tab', name: 'Close tab', hint: keys('Mod+W'), run: () => void closeTab(activeRef.current) },
     { id: 'next-tab', name: 'Next tab', hint: 'Ctrl+Tab', run: () => cycleTab(1) },
@@ -442,7 +511,7 @@ export default function App() {
     { id: 'find', name: 'Find in note', hint: keys('Mod+F'), run: () => { if (mode !== 'reading') { editorRef.current?.openSearch(); editorRef.current?.view.focus(); } }, when: !!open },
     { id: 'quick-switcher', name: 'Open quick switcher', hint: keys('Mod+O'), run: () => { setPaletteQuery(''); setPalette('files'); } },
     { id: 'search', name: 'Search in all notes', hint: keys('Mod+Shift+F'), run: () => { setLeft(true); setLeftTab('search'); setTimeout(() => searchInput.current?.select(), 0); } },
-    { id: 'tags', name: 'Show tags', run: () => { setLeft(true); setLeftTab('tags'); } },
+    { id: 'tags', name: 'Show tags', run: () => { setRight(true); setRightTab('tags'); } },
     { id: 'daily-note', name: "Open today's daily note", hint: keys('Mod+D'), run: () => void openDailyNote() },
     { id: 'random-note', name: 'Open random note', run: () => { const list = notesRef.current; if (list.length) void openNote(list[Math.floor(Math.random() * list.length)].path); } },
     { id: 'toggle-reading', name: mode === 'reading' ? 'Edit note' : 'Reading view', hint: keys('Mod+E'), run: () => setMode(m => m === 'reading' ? editModeRef.current : 'reading'), when: !!open },
@@ -474,6 +543,7 @@ export default function App() {
     { id: 'quote', name: 'Quote', hint: keys('Mod+Shift+.'), run: editorCommand(editorCommands.quote), when: editing },
     ...[1, 2, 3].map(level => ({ id: `heading-${level}`, name: `Heading ${level}`, run: editorCommand(editorCommands.heading(level)), when: editing })),
     { id: 'theme-system', name: 'Theme: match system', run: () => setTheme('system') },
+    { id: 'readable-width', name: settings.readableWidth ? 'Disable readable line length' : 'Enable readable line length', run: () => updateSettings({ readableWidth: !settings.readableWidth }) },
     { id: 'theme-light', name: 'Theme: light', run: () => setTheme('light') },
     { id: 'theme-dark', name: 'Theme: dark', run: () => setTheme('dark') },
     { id: 'command-palette', name: 'Command palette', hint: keys('Mod+P'), run: () => { setPaletteQuery(''); setPalette('commands'); } },
@@ -496,6 +566,9 @@ export default function App() {
       const nextTree = await api.tree();
       setTree(nextTree);
       const existing = new Set(flatten(nextTree));
+      // Notes that appear without their own change event, such as files in a new folder, are read too.
+      const missing = [...existing].filter(p => isNotePath(p) && !notesRef.current.some(n => n.path === p)).slice(0, 50);
+      for (const path of missing) { const value = await api.read(path).catch(() => null); if (value !== null) updateNote(path, value, true); }
       for (const path of paths) {
         if (!isNotePath(path)) continue;
         if (!existing.has(path)) {
@@ -527,6 +600,8 @@ export default function App() {
       else if (key === 't' && !event.shiftKey) run('new-tab');
       else if (key === 'w' && !event.shiftKey) run('close-tab');
       else if (key === 'd' && !event.shiftKey) run('daily-note');
+      else if (key === 'g' && !event.shiftKey) run('graph');
+      else if (key === ',') run('settings');
       else if (key === 'tab') run(event.shiftKey ? 'previous-tab' : 'next-tab');
       else if (key === 'e' && !event.shiftKey) { if (open) run('toggle-reading'); }
       else if (key === 'f' && event.shiftKey) run('search');
@@ -545,15 +620,24 @@ export default function App() {
     createNote: folder => void createNote(folder),
     createFolder: folder => void createFolder(folder),
     rename: (path, name) => void renameEntry(path, name),
+    bookmark: path => toggleBookmark(path),
+    isBookmarked: path => bookmarks.includes(path),
     trash: path => setConfirmTrash(path),
     reveal: path => void (path ? api.reveal(path) : api.revealVault()).catch(fail),
-  }), [createFolder, createNote, fail, moveEntry, openNote, renameEntry]);
+  }), [bookmarks, createFolder, createNote, fail, moveEntry, openNote, renameEntry, toggleBookmark]);
   const toggleFolder = useCallback((path: string) => setExpanded(current => { const next = new Set(current); if (next.has(path)) next.delete(path); else next.add(path); return next; }), []);
 
   const paletteItems: PaletteItem[] = useMemo(() => {
     const q = paletteQuery.trim();
     if (palette === 'commands') {
       return commands.filter(c => c.when !== false).map(c => ({ c, score: fuzzyScore(q, c.name) })).filter(x => x.score !== null).sort((a, b) => (b.score as number) - (a.score as number)).map(({ c }) => ({ id: c.id, label: c.name, hint: c.hint, run: c.run }));
+    }
+    if (palette === 'templates') {
+      const items = templates.map(p => ({ p, score: fuzzyScore(q, noteName(p)) })).filter(x => x.score !== null).sort((a, b) => (b.score as number) - (a.score as number)).map(({ p }) => ({ id: p, label: noteName(p), detail: folderOf(p), run: () => insertTemplate(p) }));
+      return items;
+    }
+    if (palette === 'pick') {
+      return notes.map(n => n.path).map(p => ({ p, score: fuzzyScore(q, noteStem(p)) })).filter(x => x.score !== null).sort((a, b) => (b.score as number) - (a.score as number)).slice(0, 60).map(({ p }) => ({ id: p, label: noteName(p), detail: folderOf(p) || undefined, run: () => { pickResolver.current?.(p); pickResolver.current = null; } }));
     }
     if (palette !== 'files') return [];
     const paths = notes.map(n => n.path);
@@ -564,7 +648,8 @@ export default function App() {
     if (q && !paths.some(p => noteStem(p).toLowerCase() === q.toLowerCase() || noteName(p).toLowerCase() === q.toLowerCase())) items.push({ id: '__create', label: `Create "${q}"`, detail: 'New note', hint: 'Enter', run: () => void createNamed(q) });
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [palette, paletteQuery, notes, vaultPath]);
+  }, [palette, paletteQuery, notes, vaultPath, templates]);
+  const closePalette = useCallback(() => { setPalette(null); if (pickResolver.current) { pickResolver.current(null); pickResolver.current = null; } }, []);
 
   const startResize = (event: React.MouseEvent) => {
     event.preventDefault();
@@ -582,10 +667,32 @@ export default function App() {
   const canGoBack = !!current && current.history.slice(0, current.index).some(p => notes.some(n => n.path === p));
   const canGoForward = !!current && current.history.slice(current.index + 1).some(p => notes.some(n => n.path === p));
   return <TooltipProvider delayDuration={400}><div className={`app ${platformClass} ${left ? '' : 'left-collapsed'} ${right ? '' : 'right-collapsed'}`} style={{ '--left-width': left ? `${leftWidth}px` : '0px', '--right-width': right ? '280px' : '0px' } as React.CSSProperties}>
+    <div className="corner" />
+    <nav className="ribbon" aria-label="Ribbon">
+      <IconButton label={`Quick switcher (${keys('Mod+O')})`} side="right" onClick={() => { setPaletteQuery(''); setPalette('files'); }}><SearchIcon size={18} /></IconButton>
+      <IconButton label={`Graph view (${keys('Mod+G')})`} side="right" active={kind === 'graph'} onClick={() => void openGraph()}><Waypoints size={18} /></IconButton>
+      <IconButton label="Create new canvas" side="right" onClick={() => void createCanvas()}><LayoutDashboard size={18} /></IconButton>
+      <IconButton label={`Today's daily note (${keys('Mod+D')})`} side="right" onClick={() => void openDailyNote()}><CalendarDays size={18} /></IconButton>
+      <IconButton label="Insert template" side="right" disabled={!editing} onClick={() => { setPaletteQuery(''); setPalette('templates'); }}><FilePlus size={18} /></IconButton>
+      <IconButton label={`Command palette (${keys('Mod+P')})`} side="right" onClick={() => { setPaletteQuery(''); setPalette('commands'); }}><Command size={18} /></IconButton>
+      <span className="ribbon-space" />
+      <Menu align="start" trigger={<button type="button" className="icon-button" aria-label="Vault options" title={info.vault.name}><FolderOpen size={18} /></button>}>
+        <MenuLabel>{info.vault.path}</MenuLabel>
+        <MenuItem onSelect={() => void chooseVault(false)}>Open another vault…</MenuItem>
+        <MenuItem onSelect={() => void chooseVault(true)}>Create new vault…</MenuItem>
+        {info.recent.filter(p => p !== info.vault?.path).length > 0 && <MenuSeparator />}
+        {info.recent.filter(p => p !== info.vault?.path).map(p => <MenuItem key={p} onSelect={() => void flush().catch(() => {}).then(() => api.openVault(p)).then(loadVault).catch(fail)}>{p.split(/[\\/]/).pop()}</MenuItem>)}
+        <MenuSeparator />
+        <MenuItem onSelect={() => void api.revealVault().catch(fail)}>Show vault in file manager</MenuItem>
+        <MenuItem onSelect={() => void flush().catch(() => {}).then(() => api.closeVault()).then(loadVault).catch(fail)}>Close vault</MenuItem>
+      </Menu>
+      <IconButton label="Help" side="right" onClick={() => void api.openExternal(HELP_URL).catch(fail)}><CircleHelp size={18} /></IconButton>
+      <IconButton label={`Settings (${keys('Mod+,')})`} side="right" onClick={() => setSettingsOpen(true)}><Settings size={18} /></IconButton>
+    </nav>
     <div className="titlebar-left" hidden={!left}>
       <IconButton label="Files" active={leftTab === 'files'} onClick={() => setLeftTab('files')}><Files size={17} /></IconButton>
       <IconButton label={`Search (${keys('Mod+Shift+F')})`} active={leftTab === 'search'} onClick={() => { setLeftTab('search'); setTimeout(() => searchInput.current?.focus(), 0); }}><SearchIcon size={17} /></IconButton>
-      <IconButton label="Tags" active={leftTab === 'tags'} onClick={() => setLeftTab('tags')}><Hash size={17} /></IconButton>
+      <IconButton label="Bookmarks" active={leftTab === 'bookmarks'} onClick={() => setLeftTab('bookmarks')}><Bookmark size={17} /></IconButton>
       <span className="titlebar-space" />
       <IconButton label={`Hide sidebar (${keys('Mod+Shift+L')})`} onClick={() => setLeft(false)}><PanelLeft size={17} /></IconButton>
     </div>
@@ -595,7 +702,7 @@ export default function App() {
       <IconButton label="Back" disabled={!canGoBack} onClick={() => go(-1)}><ArrowLeft size={16} /></IconButton>
       <IconButton label="Forward" disabled={!canGoForward} onClick={() => go(1)}><ArrowRight size={16} /></IconButton>
       <div className="tabs">
-        {tabs.map(tab => { const title = tab.path ? noteName(tab.path) : 'New tab'; return <div key={tab.id} role="tab" aria-selected={tab.id === activeTab} tabIndex={-1} className={`tab ${tab.id === activeTab ? 'is-active' : ''}`} title={tab.path || undefined}
+        {tabs.map(tab => { const title = tabTitle(tab.path); return <div key={tab.id} role="tab" aria-selected={tab.id === activeTab} tabIndex={-1} className={`tab ${tab.id === activeTab ? 'is-active' : ''}`} title={tab.path || undefined}
           onClick={() => void selectTab(tab.id)} onAuxClick={e => { if (e.button === 1) { e.preventDefault(); void closeTab(tab.id); } }}>
           <span className="tab-title">{title}</span>
           <button type="button" className="tab-close" aria-label={`Close ${title}`} onClick={e => { e.stopPropagation(); void closeTab(tab.id); }}><X size={13} /></button>
@@ -605,44 +712,25 @@ export default function App() {
       {!right && <IconButton label={`Show right sidebar (${keys('Mod+Shift+R')})`} onClick={() => setRight(true)}><PanelRight size={17} /></IconButton>}
     </div>
     <div className="titlebar-right" hidden={!right}>
-      <IconButton label="Outline" active={rightTab === 'outline'} onClick={() => setRightTab('outline')}><ListTree size={17} /></IconButton>
       <IconButton label="Backlinks" active={rightTab === 'backlinks'} onClick={() => setRightTab('backlinks')}><Link2 size={17} /></IconButton>
+      <IconButton label="Outgoing links" active={rightTab === 'outgoing'} onClick={() => setRightTab('outgoing')}><ArrowUpRight size={17} /></IconButton>
+      <IconButton label="Tags" active={rightTab === 'tags'} onClick={() => setRightTab('tags')}><Hash size={17} /></IconButton>
+      <IconButton label="Outline" active={rightTab === 'outline'} onClick={() => setRightTab('outline')}><ListTree size={17} /></IconButton>
       <IconButton label="Format" active={rightTab === 'format'} onClick={() => setRightTab('format')}><SlidersHorizontal size={17} /></IconButton>
       <span className="titlebar-space" />
       <IconButton label={`Hide right sidebar (${keys('Mod+Shift+R')})`} onClick={() => setRight(false)}><PanelRight size={17} /></IconButton>
     </div>
 
     <aside className={`sidebar sidebar-left ${left ? '' : 'is-collapsed'}`} aria-label="Left sidebar" aria-hidden={!left}>
-      {leftTab === 'files' ? <FileTree vaultName={info.vault.name} tree={tree} openPath={open} expanded={expanded} toggle={toggleFolder} collapseAll={() => setExpanded(new Set())} actions={treeActions} renaming={renaming} setRenaming={setRenaming} />
-        : leftTab === 'tags' ? <TagsPane tags={tags} onSelect={openTag} />
+      {leftTab === 'files' ? <FileTree vaultName={info.vault.name} tree={tree} openPath={current?.path ?? null} expanded={expanded} toggle={toggleFolder} collapseAll={() => setExpanded(new Set())} actions={treeActions} renaming={renaming} setRenaming={setRenaming} />
+        : leftTab === 'bookmarks' ? <BookmarksPane bookmarks={bookmarks} onOpen={path => void openNote(path)} onRemove={toggleBookmark} />
           : <SearchPane query={query} setQuery={setQuery} hits={hits} inputRef={searchInput} onOpen={(path, line, from, length) => void openNote(path, { line, from, length })} />}
-      <div className="sidebar-footer">
-        <Menu align="start" trigger={<button type="button" className="vault-switcher" aria-label="Vault options"><span className="vault-name">{info.vault.name}</span><ChevronDown size={14} /></button>}>
-          <MenuLabel>{info.vault.path}</MenuLabel>
-          <MenuItem onSelect={() => void chooseVault(false)}><FolderOpen size={15} />Open another vault…</MenuItem>
-          <MenuItem onSelect={() => void chooseVault(true)}><FilePlus size={15} />Create new vault…</MenuItem>
-          {info.recent.filter(p => p !== info.vault?.path).length > 0 && <MenuSeparator />}
-          {info.recent.filter(p => p !== info.vault?.path).map(p => <MenuItem key={p} onSelect={() => void flush().catch(() => {}).then(() => api.openVault(p)).then(loadVault).catch(fail)}>{p.split(/[\\/]/).pop()}</MenuItem>)}
-          <MenuSeparator />
-          <MenuItem onSelect={() => void api.revealVault().catch(fail)}>Show vault in file manager</MenuItem>
-          <MenuItem onSelect={() => void flush().catch(() => {}).then(() => api.closeVault()).then(loadVault).catch(fail)}>Close vault</MenuItem>
-        </Menu>
-        <Menu align="end" trigger={<button type="button" className="icon-button" aria-label="Settings"><Settings2 size={16} /></button>}>
-          <MenuLabel>Theme</MenuLabel>
-          <MenuCheck checked={theme === 'system'} onSelect={() => setTheme('system')}><Monitor size={15} />Match system</MenuCheck>
-          <MenuCheck checked={theme === 'light'} onSelect={() => setTheme('light')}><Sun size={15} />Light</MenuCheck>
-          <MenuCheck checked={theme === 'dark'} onSelect={() => setTheme('dark')}><Moon size={15} />Dark</MenuCheck>
-          <MenuSeparator />
-          <MenuLabel>Editor</MenuLabel>
-          <MenuCheck checked={mode === 'live'} onSelect={() => setMode('live')}>Live preview</MenuCheck>
-          <MenuCheck checked={mode === 'source'} onSelect={() => setMode('source')}>Source mode</MenuCheck>
-          <MenuCheck checked={mode === 'reading'} onSelect={() => setMode('reading')}>Reading view</MenuCheck>
-        </Menu>
-      </div>
     </aside>
     <main className="workspace">
       {error && <div className="error-banner" role="alert"><span>{error}</span><button type="button" onClick={() => void flush().then(() => setError('')).catch(() => {})}>Retry</button><button type="button" className="icon-button small" aria-label="Dismiss" onClick={() => setError('')}><X size={15} /></button></div>}
-      {open ? <NoteView path={open} text={text} mode={mode} resolve={resolve} format={format} host={host} editorRef={editorRef} articleRef={articleRef} focusTitle={focusTitle} justRenamed={renamedRef.current === open}
+      {kind === 'graph' ? <GraphView notes={notes} resolve={resolve} focus={tabsRef.current.find(t => t.id !== activeTab && t.path && tabKind(t.path) === 'note')?.path ?? null} onOpen={path => void openNote(path, { newTab: true })} />
+        : canvasPath ? <CanvasView key={canvasPath} path={canvasPath} text={text} onChange={onChange} resolve={resolve} notes={notes} onOpenNote={path => void openNote(path, { newTab: true })} pickNote={pickNote} />
+        : open ? <NoteView path={open} text={text} mode={mode} resolve={resolve} format={format} spellcheck={settings.spellcheck} lineNumbers={settings.showLineNumbers} readableWidth={settings.readableWidth} host={host} editorRef={editorRef} articleRef={articleRef} focusTitle={focusTitle} justRenamed={renamedRef.current === open}
         onRename={name => renameEntry(open, name)} onToggleReading={() => setMode(m => m === 'reading' ? editModeRef.current : 'reading')} onToggleSource={() => setMode(m => m === 'source' ? 'live' : 'source')}
         onOpenFormat={openFormat}
         onExport={() => openPdf('pdf')} onExportDocx={() => openPdf('docx')} onReveal={() => void api.reveal(open).catch(fail)} onTrash={() => setConfirmTrash(open)} onOpenLink={openLink} onOpenTag={openTag} onOpenExternal={openExternal} />
@@ -652,6 +740,8 @@ export default function App() {
             <button type="button" onClick={() => void createNote('')}>New note<kbd>{keys('Mod+N')}</kbd></button>
             <button type="button" onClick={() => { setPaletteQuery(''); setPalette('files'); }}>Go to note<kbd>{keys('Mod+O')}</kbd></button>
             <button type="button" onClick={() => void openDailyNote()}>Today's daily note<kbd>{keys('Mod+D')}</kbd></button>
+            <button type="button" onClick={() => void openGraph()}>Graph view<kbd>{keys('Mod+G')}</kbd></button>
+            <button type="button" onClick={() => void createCanvas()}>New canvas</button>
             <button type="button" onClick={() => { setPaletteQuery(''); setPalette('commands'); }}>Command palette<kbd>{keys('Mod+P')}</kbd></button>
             {tabs.length > 1 && <button type="button" onClick={() => void closeTab(activeTab)}>Close tab<kbd>{keys('Mod+W')}</kbd></button>}
           </div>
@@ -660,14 +750,19 @@ export default function App() {
       {toast && <div className="toast" role="status"><Check size={15} />{toast}</div>}
     </main>
     <aside className={`sidebar sidebar-right ${right ? '' : 'is-collapsed'}`} aria-label="Right sidebar" aria-hidden={!right}>
-      {!open ? <div className="pane"><p className="pane-empty">Open a note to see its {rightTab}.</p></div>
+      {rightTab === 'tags' ? <TagsPane tags={tags} onSelect={openTag} />
+        : !open ? <div className="pane"><p className="pane-empty">Open a note to see its {rightTab === 'outgoing' ? 'outgoing links' : rightTab}.</p></div>
         : rightTab === 'format' ? <FormatPane format={format} onChange={setFormat} onReset={() => setFormat(DEFAULT_FORMAT)} />
+        : rightTab === 'outgoing' ? <OutgoingLinksPane links={outgoing} onOpen={(target, resolved) => { if (resolved) void openNote(resolved); else void createNamed(target); }} />
         : rightTab === 'outline' ? <OutlinePane headings={headings} onSelect={(index, line) => { if (mode === 'reading') articleRef.current?.querySelectorAll('h1,h2,h3,h4,h5,h6')[index]?.scrollIntoView({ block: 'start', behavior: 'smooth' }); else editorRef.current?.goToLine(line); }} />
           : <BacklinksPane links={links} onOpen={(path, line) => void openNote(path, { line })} />}
     </aside>
 
-    <Palette open={palette === 'files'} title="Quick switcher" placeholder="Find or create a note…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={() => setPalette(null)} empty="No notes found" />
-    <Palette open={palette === 'commands'} title="Command palette" placeholder="Select a command…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={() => setPalette(null)} empty="No commands found" />
+    <Palette open={palette === 'files'} title="Quick switcher" placeholder="Find or create a note…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={closePalette} empty="No notes found" />
+    <Palette open={palette === 'commands'} title="Command palette" placeholder="Select a command…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={closePalette} empty="No commands found" />
+    <Palette open={palette === 'templates'} title="Insert template" placeholder="Select a template…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={closePalette} empty={`No templates. Add notes to the ${settings.templatesFolder} folder.`} />
+    <Palette open={palette === 'pick'} title="Add note to canvas" placeholder="Select a note…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={closePalette} empty="No notes found" />
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} settings={settings} onChange={updateSettings} theme={theme} onTheme={setTheme} mode={mode} onMode={setMode} version={APP_VERSION} />
     <Dialog open={pdfOpen} onOpenChange={setPdfOpen} title={exportKind === 'docx' ? 'Export to Word' : 'Export to PDF'} description={open ? noteName(open) : ''}>
       <form className="form" onSubmit={e => { e.preventDefault(); void exportPdf(); }}>
         <label>Format<select value={exportKind} onChange={e => setExportKind(e.target.value as 'pdf' | 'docx')}><option value="pdf">PDF</option><option value="docx">Word (.docx)</option></select></label>

@@ -1,4 +1,4 @@
-export type Entry = { name: string; path: string; kind: 'folder' | 'note' | 'file'; children?: Entry[] };
+export type Entry = { name: string; path: string; kind: 'folder' | 'note' | 'canvas' | 'file'; children?: Entry[] };
 export type Note = { path: string; text: string };
 export type Theme = 'system' | 'light' | 'dark';
 export type Mode = 'live' | 'source' | 'reading';
@@ -21,13 +21,13 @@ declare global {
       revealVault(): Promise<void>;
       read(path: string): Promise<string>;
       write(path: string, text: string): Promise<void>;
-      createNote(folder: string, name?: string, text?: string): Promise<string>;
+      createNote(folder: string, name?: string, text?: string, extension?: '.md' | '.canvas'): Promise<string>;
       createFolder(folder: string, name?: string): Promise<string>;
       rename(from: string, to: string): Promise<string>;
       trash(path: string): Promise<void>;
       reveal(path: string): Promise<void>;
-      importImage(): Promise<string | null>;
-      saveAttachment(name: string, data: Uint8Array): Promise<string>;
+      importImage(folder?: string): Promise<string | null>;
+      saveAttachment(name: string, data: Uint8Array, folder?: string): Promise<string>;
       exportPdf(title: string, html: string, options: PdfOptions): Promise<{ fileName: string } | null>;
       exportDocx(title: string, text: string, options: PdfOptions, images: Record<string, string>): Promise<{ fileName: string } | null>;
       openExternal(url: string): Promise<void>;

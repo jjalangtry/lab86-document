@@ -1,6 +1,6 @@
 {
   "name": "lab86-document",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "A desktop Markdown editor for a folder of notes.",
   "author": "Jakob Langtry",

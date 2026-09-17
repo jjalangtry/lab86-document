@@ -31,7 +31,7 @@ if (!window.vault) {
       const inside = (path: string) => folderOf(path) === parent;
       const byName = (a: Entry, b: Entry) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
       const folderEntries = [...folders].filter(inside).map(path => ({ name: path.split('/').pop() as string, path, kind: 'folder' as const, children: build(path) })).sort(byName);
-      const noteEntries = Object.keys(state.files).filter(inside).map(path => ({ name: path.split('/').pop() as string, path, kind: 'note' as const })).sort(byName);
+      const noteEntries = Object.keys(state.files).filter(inside).map(path => ({ name: path.split('/').pop() as string, path, kind: path.endsWith('.canvas') ? 'canvas' as const : 'note' as const })).sort(byName);
       return [...folderEntries, ...noteEntries];
     };
     return build('');
@@ -54,11 +54,11 @@ if (!window.vault) {
     forgetVault: async () => info(),
     closeVault: async () => { state.open = false; return info(); },
     tree: async () => tree(),
-    index: async (): Promise<Note[]> => Object.entries(state.files).map(([path, text]) => ({ path, text })),
+    index: async (): Promise<Note[]> => Object.entries(state.files).filter(([path]) => path.endsWith('.md')).map(([path, text]) => ({ path, text })),
     revealVault: async () => {},
     read: async path => { if (!(path in state.files)) throw Error('The note does not exist.'); return state.files[path]; },
     write: async (path, text) => { await wait(); state.files[path] = text; persist(); },
-    createNote: async (folder, name = 'Untitled', text = '') => { const path = unique(folder, name, '.md'); state.files[path] = text; notify([path]); return path; },
+    createNote: async (folder, name = 'Untitled', text = '', extension = '.md') => { const path = unique(folder, name, extension); state.files[path] = text; notify([path]); return path; },
     createFolder: async (folder, name = 'New folder') => { const path = unique(folder, name, ''); state.folders.push(path); notify([path]); return path; },
     rename: async (from, to) => {
       if (to in state.files || state.folders.includes(to)) throw Error('An item with this name exists.');

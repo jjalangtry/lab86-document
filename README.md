@@ -33,10 +33,20 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 - Underline uses `<u>` tags. A centered or right-aligned paragraph uses `<p align="center">` tags. Both are normal Markdown with inline HTML. The live preview hides the tags.
 - The PDF export uses the font, size, spacing, alignment, indent, paper, margins, and page numbers of the note.
 
+## Ribbon
+
+The ribbon is the icon strip on the left edge. It has the quick switcher, the graph view, a new canvas, today's daily note, insert template, and the command palette. At the bottom are the vault menu, help, and settings.
+
+- **Graph view** shows every note as a dot and every link as a line. Drag dots, scroll to zoom, click a dot to open the note. The local graph shows only the open note and its links.
+- **Canvas** is a freeform board saved as a `.canvas` file in the JSON Canvas format that Obsidian uses. Double-click to add a text card, add a note card from the vault, drag a side handle to connect cards, and pick a color for a card.
+- **Templates** are notes in the `Templates` folder. Insert one from the ribbon or the command palette. `{{date}}`, `{{time}}`, `{{title}}`, and `{{date:YYYY-MM-DD}}` fill in.
+- **Settings** has the theme, text size, readable line length, default view, spellcheck, line numbers, new note location, and the folders for attachments, daily notes, and templates.
+
 ## Navigate
 
 - Notes open in tabs in the title bar. Ctrl+click or middle-click a file or link to open it in a new tab. Ctrl+T opens a tab, Ctrl+W closes it, Ctrl+Tab moves to the next tab.
-- The left sidebar shows the files, the search, and the tags. Right-click a file or folder for more actions. Drag a file onto a folder to move it.
+- The left sidebar shows the files, the search, and the bookmarks. Right-click a file or folder for more actions, including Bookmark. Drag a file onto a folder to move it.
+- The right sidebar shows the backlinks, the outgoing links, the tags, the outline, and the format of the open note.
 - Hold the pointer over a wikilink to see a preview of the linked note.
 - `> [!note] Title` starts a callout. Types include note, tip, warning, success, question, failure, example, and quote.
 - Ctrl+D opens today's daily note in the `Daily` folder.
@@ -53,6 +63,8 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 | New tab / Close tab | Ctrl/Cmd+T / W |
 | Next / Previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Daily note | Ctrl/Cmd+D |
+| Graph view | Ctrl/Cmd+G |
+| Settings | Ctrl/Cmd+, |
 | Quick switcher | Ctrl/Cmd+O |
 | Command palette | Ctrl/Cmd+P |
 | Search in all notes | Ctrl/Cmd+Shift+F |

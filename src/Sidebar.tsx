@@ -11,6 +11,8 @@ export type TreeActions = {
   createNote: (folder: string) => void;
   createFolder: (folder: string) => void;
   rename: (path: string, name: string) => void;
+  bookmark: (path: string) => void;
+  isBookmarked: (path: string) => boolean;
   trash: (path: string) => void;
   reveal: (path: string) => void;
 };
@@ -34,7 +36,8 @@ function TreeRow({ entry, depth, openPath, expanded, toggle, actions, renaming, 
     onDrop: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDropping(false); const source = e.dataTransfer.getData('text/x-vault-path'); if (source && source !== entry.path && !entry.path.startsWith(`${source}/`)) actions.move(source, entry.path); },
   } : {};
   const selected = entry.path === openPath;
-  const label = isFolder ? entry.name : entry.kind === 'note' ? noteName(entry.path) : entry.name;
+  const openable = entry.kind === 'note' || entry.kind === 'canvas';
+  const label = isFolder ? entry.name : openable ? entry.name.replace(/\.(md|canvas)$/i, '') : entry.name;
   const commit = (value: string) => {
     setRenaming(null);
     const name = value.trim();
@@ -49,8 +52,9 @@ function TreeRow({ entry, depth, openPath, expanded, toggle, actions, renaming, 
     <ContextSeparator />
     <ContextItem danger onSelect={() => actions.trash(entry.path)}>Delete</ContextItem>
   </> : <>
-    {entry.kind === 'note' && <ContextItem onSelect={() => actions.open(entry.path)}>Open</ContextItem>}
-    {entry.kind === 'note' && <ContextItem onSelect={() => actions.openInTab(entry.path)}>Open in new tab</ContextItem>}
+    {openable && <ContextItem onSelect={() => actions.open(entry.path)}>Open</ContextItem>}
+    {openable && <ContextItem onSelect={() => actions.openInTab(entry.path)}>Open in new tab</ContextItem>}
+    {entry.kind === 'note' && <ContextItem onSelect={() => actions.bookmark(entry.path)}>{actions.isBookmarked(entry.path) ? 'Remove bookmark' : 'Bookmark'}</ContextItem>}
     <ContextItem onSelect={() => setRenaming(entry.path)}>Rename</ContextItem>
     <ContextItem onSelect={() => actions.reveal(entry.path)}>Show in file manager</ContextItem>
     <ContextSeparator />
@@ -64,11 +68,11 @@ function TreeRow({ entry, depth, openPath, expanded, toggle, actions, renaming, 
         draggable={renaming !== entry.path}
         onDragStart={e => { e.dataTransfer.setData('text/x-vault-path', entry.path); e.dataTransfer.setData('text/plain', entry.path); e.dataTransfer.effectAllowed = 'move'; }}
         {...dropProps}
-        onAuxClick={e => { if (e.button === 1 && entry.kind === 'note') { e.preventDefault(); actions.openInTab(entry.path); } }}
-        onClick={e => { if (isFolder) toggle(entry.path); else if (entry.kind === 'note') { if (e.ctrlKey || e.metaKey) actions.openInTab(entry.path); else actions.open(entry.path); } }}
-        onKeyDown={e => { if (e.key === 'Enter') { if (isFolder) toggle(entry.path); else if (entry.kind === 'note') actions.open(entry.path); } if (e.key === 'F2') setRenaming(entry.path); }}>
+        onAuxClick={e => { if (e.button === 1 && openable) { e.preventDefault(); actions.openInTab(entry.path); } }}
+        onClick={e => { if (isFolder) toggle(entry.path); else if (openable) { if (e.ctrlKey || e.metaKey) actions.openInTab(entry.path); else actions.open(entry.path); } }}
+        onKeyDown={e => { if (e.key === 'Enter') { if (isFolder) toggle(entry.path); else if (openable) actions.open(entry.path); } if (e.key === 'F2') setRenaming(entry.path); }}>
         {isFolder ? <span className="tree-chevron">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span> : <span className="tree-chevron" />}
-        {renaming === entry.path ? <RenameInput initial={label} onCommit={commit} onCancel={() => setRenaming(null)} /> : <span className="tree-label" title={entry.path}>{label}</span>}
+        {renaming === entry.path ? <RenameInput initial={label} onCommit={commit} onCancel={() => setRenaming(null)} /> : <span className="tree-label" title={entry.path}>{label}{entry.kind === 'canvas' && <span className="tree-badge">canvas</span>}</span>}
       </div>
     </ContextMenu>
     {isFolder && isOpen && entry.children?.map(child => <TreeRow key={child.path} entry={child} depth={depth + 1} openPath={openPath} expanded={expanded} toggle={toggle} actions={actions} renaming={renaming} setRenaming={setRenaming} />)}
@@ -129,6 +133,19 @@ export function TagsPane({ tags, onSelect }: { tags: { tag: string; count: numbe
     <div className="pane-scroll">
       {tags.length === 0 && <p className="pane-empty">No tags yet. Type #tag in a note.</p>}
       {tags.map(({ tag, count }) => <button type="button" key={tag} className="tag-item" onClick={() => onSelect(tag)}><span className="tag-name">#{tag}</span><span className="search-count">{count}</span></button>)}
+    </div>
+  </div>;
+}
+
+export function BookmarksPane({ bookmarks, onOpen, onRemove }: { bookmarks: string[]; onOpen: (path: string) => void; onRemove: (path: string) => void }) {
+  return <div className="pane">
+    <div className="pane-header"><span className="pane-title">Bookmarks</span><span className="pane-count">{bookmarks.length}</span></div>
+    <div className="pane-scroll">
+      {bookmarks.length === 0 && <p className="pane-empty">No bookmarks yet. Right-click a note and select Bookmark.</p>}
+      {bookmarks.map(path => <div key={path} className="bookmark-item">
+        <button type="button" className="bookmark-open" title={path} onClick={() => onOpen(path)}>{noteName(path)}</button>
+        <button type="button" className="icon-button small" aria-label={`Remove bookmark ${noteName(path)}`} onClick={() => onRemove(path)}><X size={13} /></button>
+      </div>)}
     </div>
   </div>;
 }

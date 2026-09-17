@@ -8,6 +8,7 @@ import { IconButton, Menu, MenuCheck, MenuItem, MenuSeparator, keys } from './ui
 
 type Props = {
   path: string; text: string; mode: Mode; resolve: Resolver; format: DocumentFormat;
+  spellcheck: boolean; lineNumbers: boolean; readableWidth: boolean;
   host: () => EditorHost;
   editorRef: MutableRefObject<NoteEditor | null>;
   articleRef: MutableRefObject<HTMLElement | null>;
@@ -27,7 +28,7 @@ type Props = {
 };
 
 export function NoteView(props: Props) {
-  const { path, text, mode, resolve, format, host, editorRef, articleRef, focusTitle, justRenamed } = props;
+  const { path, text, mode, resolve, format, host, editorRef, articleRef, focusTitle, justRenamed, spellcheck, lineNumbers, readableWidth } = props;
   const container = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const handledFocus = useRef(0);
@@ -54,6 +55,8 @@ export function NoteView(props: Props) {
   }, [path]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { editorRef.current?.replaceText(text); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { editorRef.current?.setMode(editMode); }, [editMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { editorRef.current?.setSpellcheck(spellcheck); }, [spellcheck]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { editorRef.current?.setLineNumbers(lineNumbers && mode === 'source'); }, [lineNumbers, mode]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (focusTitle !== handledFocus.current) { handledFocus.current = focusTitle; focusTitleInput(); } }, [focusTitle]);
 
   const html = useMemo(() => mode === 'reading' ? renderMarkdown(text, path, resolve) : '', [mode, text, path, resolve]);
@@ -115,7 +118,7 @@ export function NoteView(props: Props) {
       </div>
     </header>
     <div className="view-scroll">
-      <div className={`note-body ${format.indent ? 'has-indent' : ''}`} style={bodyStyle}>
+      <div className={`note-body ${format.indent ? 'has-indent' : ''} ${readableWidth ? '' : 'is-wide'}`} style={bodyStyle}>
         <input ref={titleRef} className="inline-title" aria-label="Note title" value={title} maxLength={200} spellCheck={false} onChange={e => setTitle(e.target.value)} onBlur={commitTitle}
           onKeyDown={e => {
             if (e.key === 'Enter') { e.preventDefault(); commitTitle(); if (mode !== 'reading') editorRef.current?.view.focus(); }

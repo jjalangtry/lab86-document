@@ -1,5 +1,5 @@
 import { Compartment, EditorSelection, EditorState, Prec, StateField, type Extension } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, hoverTooltip, keymap, showTooltip, type Tooltip } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, hoverTooltip, keymap, lineNumbers, showTooltip, type Tooltip } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands';
 import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
@@ -527,6 +527,9 @@ export type NoteEditor = {
   openSearch(): boolean;
   open(path: string, text: string): void;
   setMode(mode: Exclude<Mode, 'reading'>): void;
+  setSpellcheck(on: boolean): void;
+  setLineNumbers(on: boolean): void;
+  insertText(text: string, minimum?: number): void;
   text(): string;
   replaceText(text: string): void;
   goToLine(line: number): void;
@@ -538,6 +541,9 @@ export type NoteEditor = {
 
 export function createEditor(parent: HTMLElement, host: () => EditorHost, initialMode: Exclude<Mode, 'reading'>): NoteEditor {
   const modeCompartment = new Compartment();
+  const spellCompartment = new Compartment();
+  const gutterCompartment = new Compartment();
+  const spellExtension = (on: boolean) => EditorView.contentAttributes.of({ spellcheck: on ? 'true' : 'false', autocorrect: 'off', autocapitalize: 'off', 'aria-label': 'Note text' });
   const states = new Map<string, EditorState>();
   let current: string | null = null;
   const modeExtension = (mode: Exclude<Mode, 'reading'>): Extension => mode === 'live' ? [livePreview(host), frontmatterField(host)] : [];
@@ -555,7 +561,8 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
     modeCompartment.of(modeExtension(initialMode)),
     selectionToolbar(host),
     linkPreview(host),
-    EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'off', autocapitalize: 'off', 'aria-label': 'Note text' }),
+    spellCompartment.of(spellExtension(true)),
+    gutterCompartment.of([]),
     EditorView.exceptionSink.of(error => console.error('editor', error)),
     Prec.highest(keymap.of([
       { key: 'Enter', run: endEmptyListItem },
@@ -612,6 +619,14 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
       else view.setState(EditorState.create({ doc: text, extensions }));
     },
     setMode(mode) { view.dispatch({ effects: modeCompartment.reconfigure(modeExtension(mode)) }); },
+    setSpellcheck(on) { view.dispatch({ effects: spellCompartment.reconfigure(spellExtension(on)) }); },
+    setLineNumbers(on) { view.dispatch({ effects: gutterCompartment.reconfigure(on ? lineNumbers() : []) }); },
+    insertText(text, minimum = 0) {
+      // Templates go after the frontmatter block, never inside it.
+      const at = Math.max(view.state.selection.main.head, Math.min(minimum, view.state.doc.length));
+      view.dispatch({ changes: { from: at, insert: text }, selection: EditorSelection.cursor(at + text.length) });
+      view.focus();
+    },
     text() { return view.state.doc.toString(); },
     replaceText(text) {
       if (view.state.doc.toString() === text) return;

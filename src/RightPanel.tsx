@@ -65,3 +65,14 @@ export function FormatPane({ format, onChange, onReset }: { format: DocumentForm
     </div>
   </div>;
 }
+
+export type OutgoingLink = { target: string; resolved: string | null; count: number };
+export function OutgoingLinksPane({ links, onOpen }: { links: OutgoingLink[]; onOpen: (target: string, resolved: string | null) => void }) {
+  return <div className="pane">
+    <div className="pane-header"><span className="pane-title">Outgoing links</span><span className="pane-count">{links.length}</span></div>
+    <div className="pane-scroll">
+      {links.length === 0 && <p className="pane-empty">This note has no links. Type [[ to add one.</p>}
+      {links.map(link => <button type="button" key={link.target} className={`outline-item outgoing-link ${link.resolved ? '' : 'is-unresolved'}`} title={link.resolved || 'Click to create this note'} onClick={() => onOpen(link.target, link.resolved)}>{link.resolved ? noteName(link.resolved) : link.target}{link.count > 1 && <span className="search-count">{link.count}</span>}</button>)}
+    </div>
+  </div>;
+}

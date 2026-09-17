@@ -128,18 +128,18 @@ app.whenReady().then(async () => {
   handle('vault:reveal', () => shell.openPath(requireVault().root));
   handle('note:read', relative => requireVault().read(relative));
   handle('note:write', (relative, text) => requireVault().write(relative, text));
-  handle('note:create', (folder, name, text) => requireVault().createNote(folder, name, text));
+  handle('note:create', (folder, name, text, extension) => requireVault().createNote(folder, name, text, extension));
   handle('folder:create', (folder, name) => requireVault().createFolder(folder, name));
   handle('entry:rename', (from, to) => requireVault().rename(from, to));
   handle('entry:trash', relative => shell.trashItem(requireVault().resolve(relative)));
   handle('entry:reveal', relative => shell.showItemInFolder(requireVault().resolve(relative)));
-  handle('attachment:import', async () => {
+  handle('attachment:import', async folder => {
     const result = await dialog.showOpenDialog(window, { title: 'Insert an image', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] }], properties: ['openFile'] });
     if (result.canceled || !result.filePaths[0]) return null;
     const file = result.filePaths[0];
-    return requireVault().saveAttachment(path.basename(file), await fs.readFile(file));
+    return requireVault().saveAttachment(path.basename(file), await fs.readFile(file), folder);
   });
-  handle('attachment:save', (name, data) => requireVault().saveAttachment(String(name), data));
+  handle('attachment:save', (name, data, folder) => requireVault().saveAttachment(String(name), data, folder));
   handle('export:pdf', async (title, body, options) => {
     if (typeof title !== 'string' || typeof body !== 'string' || body.length > 30_000_000) throw Error('Invalid export request.');
     const result = await dialog.showSaveDialog(window, { title: 'Export to PDF', defaultPath: path.join(app.getPath('documents'), `${title.replace(/[/\\:*?"<>|]/g, '-') || 'Note'}.pdf`), filters: [{ name: 'PDF', extensions: ['pdf'] }] });

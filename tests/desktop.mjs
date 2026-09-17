@@ -15,6 +15,7 @@ let app;
 const errors = [];
 const launch = () => electron.launch({ args: [process.env.LABDOC_TEST_APP || '.', '--no-sandbox', '--disable-gpu'], env: { ...process.env, LABDOC_TEST_DATA: data }, timeout: 30000 });
 const read = name => fs.readFile(path.join(vault, name), 'utf8');
+const todayName = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
 try {
   app = await launch();
   let page = await app.firstWindow();
@@ -183,8 +184,45 @@ try {
   // The tags pane lists tags. The daily note command makes today's note.
   await page.getByRole('button', { name: 'Tags', exact: true }).click();
   await expect(page.locator('.tag-item')).toHaveText(/#topic/);
+
+  // Outgoing links list the links of the open note. Bookmarks come from the context menu.
+  await page.getByRole('treeitem', { name: 'First note' }).click();
+  await page.getByRole('button', { name: 'Outgoing links', exact: true }).click();
+  await expect(page.locator('.outgoing-link')).toHaveText(/Renamed note/);
+  await page.getByRole('treeitem', { name: 'First note' }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Bookmark', exact: true }).click();
+  await page.getByRole('button', { name: 'Bookmarks', exact: true }).click();
+  await expect(page.locator('.bookmark-open')).toHaveText('First note');
+
+  // Templates insert with filled tokens. Settings open with Ctrl+,.
+  await fs.mkdir(path.join(vault, 'Templates'), { recursive: true });
+  await fs.writeFile(path.join(vault, 'Templates', 'Meeting.md'), '## Meeting {{date}}\n- Attendees:\n');
+  await expect.poll(async () => { await page.keyboard.press('Control+p'); await page.getByRole('combobox', { name: 'Select a command…' }).fill('insert template'); await page.keyboard.press('Enter'); const found = await page.getByRole('option', { name: /Meeting/ }).isVisible().catch(() => false); if (!found) await page.keyboard.press('Escape'); return found; }, { timeout: 10000 }).toBe(true);
+  await page.getByRole('option', { name: /Meeting/ }).click();
+  await expect.poll(() => read('First note.md')).toContain(`## Meeting ${todayName}`);
+  await page.keyboard.press('Control+,');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Readable line length' }).uncheck();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.note-body')).toHaveClass(/is-wide/);
+
+  // The graph view opens in a tab. A canvas is a .canvas file with cards.
+  await page.getByRole('button', { name: /Graph view/ }).click();
+  await expect(page.getByRole('tab', { selected: true })).toHaveText(/Graph view/);
+  await expect(page.getByTestId('graph-view')).toBeVisible();
+  await expect(page.locator('.graph-count')).toContainText(/notes/);
+  await page.keyboard.press('Control+w');
+  await page.getByRole('button', { name: 'Create new canvas', exact: true }).click();
+  await expect(page.getByTestId('canvas-view')).toBeVisible();
+  await page.getByRole('button', { name: 'Add card', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Card text' }).fill('A canvas card');
+  await page.locator('.canvas-toolbar').click();
+  await expect(page.locator('.canvas-node-body')).toContainText('A canvas card');
+  await expect.poll(() => read('Untitled.canvas')).toContain('"text": "A canvas card"');
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  await expect(page.getByRole('treeitem', { name: /Untitled/ })).toBeVisible();
+  await page.keyboard.press('Control+w');
   await page.keyboard.press('Control+d');
-  const todayName = new Date().toISOString().slice(0, 10);
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue(todayName);
   await expect.poll(() => fs.readdir(path.join(vault, 'Daily'))).toContain(`${todayName}.md`);
   await page.getByRole('button', { name: 'Files', exact: true }).click();
