@@ -1,6 +1,6 @@
 {
   "name": "lab86-document",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "A desktop Markdown editor for a folder of notes.",
   "author": "Jakob Langtry",
@@ -39,7 +39,6 @@
     "electron": "44.4.1",
     "electron-builder": "26.15.3",
     "lucide-react": "1.46.0",
-    "marked": "^18.0.13",
     "pdfjs-dist": "6.3.289",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -89,6 +88,7 @@
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.3.7",
-    "docx": "^9.7.1"
+    "docx": "^9.7.1",
+    "marked": "^18.0.13"
   }
 }
