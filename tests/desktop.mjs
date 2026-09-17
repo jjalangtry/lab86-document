@@ -237,6 +237,7 @@ try {
   // Callouts render in the live preview and the reading view.
   await page.locator('.cm-content .cm-line').first().click();
   await expect(page.locator('.cm-line.cm-callout-title')).toHaveText('Remember');
+  await expect(page.locator('.cm-line.cm-callout').nth(1)).toHaveText('Water twice.');
   await page.getByTestId('mode-toggle').click();
   await expect(page.locator('.callout.callout-tip .callout-title')).toHaveText('Remember');
   await page.getByTestId('mode-toggle').click();

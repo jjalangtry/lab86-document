@@ -6,6 +6,7 @@ import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/lang
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { autocompletion, type CompletionContext } from '@codemirror/autocomplete';
 import type { InlineContext, MarkdownConfig } from '@lezer/markdown';
+import type { SyntaxNode } from '@lezer/common';
 import { tags as t } from '@lezer/highlight';
 import { isImagePath, vaultUrl } from './markdown';
 import { formatOf, formatSummary, parseFrontmatter } from './frontmatter';
@@ -182,7 +183,16 @@ function livePreview(host: () => EditorHost) {
       const touches = (from: number, to: number) => ranges.some(r => r.from <= to && r.to >= from);
       const touchesLines = (from: number, to: number) => touches(doc.lineAt(from).from, doc.lineAt(to).to);
       const add = (from: number, to: number, deco: Decoration) => { if (to >= from) marks.push({ from, to, deco }); };
-      const hide = (from: number, to: number) => { if (to > from) add(from, to, Decoration.replace({})); };
+      const hidden = new Set<string>();
+      const hide = (from: number, to: number) => { const key = `${from}-${to}`; if (to > from && !hidden.has(key)) { hidden.add(key); add(from, to, Decoration.replace({})); } };
+      // Quote marks on continuation lines nest inside the paragraph, so all descendants are collected.
+      const descendants = (parent: SyntaxNode, name: string) => {
+        const found: { from: number; to: number }[] = [];
+        const cursor = parent.cursor();
+        if (!cursor.firstChild()) return found;
+        do { if (cursor.name === name) found.push({ from: cursor.from, to: cursor.to }); } while (cursor.next() && cursor.from < parent.to);
+        return found;
+      };
       const lineClass = (from: number, to: number, cls: string) => {
         for (let line = doc.lineAt(from); ; line = doc.line(line.number + 1)) {
           add(line.from, line.from, Decoration.line({ class: cls }));
@@ -278,7 +288,7 @@ function livePreview(host: () => EditorHost) {
             const kind = callout ? (CALLOUT_TYPES[callout[2].toLowerCase()] || 'note') : null;
             lineClass(node.from, node.to, kind ? `cm-quote cm-callout cm-callout-${kind}` : 'cm-quote');
             const revealed = touchesLines(node.from, node.to);
-            if (!revealed) for (const mark of node.node.getChildren('QuoteMark')) hide(mark.from, mark.to + spaceAfter(mark.to));
+            if (!revealed) for (const mark of descendants(node.node, 'QuoteMark')) hide(mark.from, mark.to + spaceAfter(mark.to));
             if (callout) {
               add(first.from, first.from, Decoration.line({ class: 'cm-callout-title' }));
               const markFrom = first.from + callout[1].length, markTo = first.from + callout[0].length;
