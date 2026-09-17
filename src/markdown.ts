@@ -119,6 +119,8 @@ export function renderMarkdown(source: string, notePath: string, resolve: Resolv
   const text = stripFrontmatter(source);
   const marked = new Marked({ gfm: true, breaks: false, extensions: [alignedBlock, wikilink(resolve, notePath), tag, highlight] });
   marked.use({
+    // Indented text is a paragraph, not a code block. Fenced code blocks still work.
+    tokenizer: { code: () => undefined },
     renderer: {
       link(token: Tokens.Link) {
         const inner = this.parser.parseInline(token.tokens);

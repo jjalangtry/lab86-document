@@ -1,5 +1,5 @@
 import { Compartment, EditorSelection, EditorState, Prec, StateField, type Extension } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, keymap } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, keymap, showTooltip, type Tooltip } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
@@ -27,9 +27,11 @@ const ALIGNED_BLOCK = /^<(p|h[1-6]|div|center)(?:\s+align="(left|center|right|ju
 const INLINE_TAGS = new Set(['u', 'sub', 'sup', 'mark', 'ins', 'del', 's', 'small']);
 
 // Lezer extension for [[wikilinks]], ![[embeds]] and #tags.
-const LBRACKET = 91, RBRACKET = 93, BANG = 33, HASH = 35, NEWLINE = 10;
+const LBRACKET = 91, RBRACKET = 93, BANG = 33, HASH = 35, NEWLINE = 10, EQUALS = 61;
 const wikiConfig: MarkdownConfig = {
-  defineNodes: [{ name: 'WikiLink', style: t.link }, { name: 'WikiEmbed', style: t.link }, { name: 'WikiLinkMark', style: t.processingInstruction }, { name: 'Tag', style: t.labelName }],
+  // Indented code blocks are removed. Indented text stays a paragraph, which essays need.
+  remove: ['IndentedCode'],
+  defineNodes: [{ name: 'WikiLink', style: t.link }, { name: 'WikiEmbed', style: t.link }, { name: 'WikiLinkMark', style: t.processingInstruction }, { name: 'Tag', style: t.labelName }, { name: 'Highlight' }, { name: 'HighlightMark', style: t.processingInstruction }],
   parseInline: [{
     name: 'WikiLink', before: 'Link',
     parse(cx: InlineContext, next: number, pos: number) {
@@ -44,6 +46,18 @@ const wikiConfig: MarkdownConfig = {
       }
       if (end >= cx.end || end === open + 2) return -1;
       return cx.addElement(cx.elt(embed ? 'WikiEmbed' : 'WikiLink', pos, end + 2, [cx.elt('WikiLinkMark', open, open + 2), cx.elt('WikiLinkMark', end, end + 2)]));
+    },
+  }, {
+    name: 'Highlight', before: 'Emphasis',
+    parse(cx: InlineContext, next: number, pos: number) {
+      if (next !== EQUALS || cx.char(pos + 1) !== EQUALS || cx.char(pos + 2) === EQUALS) return -1;
+      let end = pos + 2;
+      while (end < cx.end && !(cx.char(end) === EQUALS && cx.char(end + 1) === EQUALS)) {
+        if (cx.char(end) === NEWLINE) return -1;
+        end++;
+      }
+      if (end >= cx.end || end === pos + 2) return -1;
+      return cx.addElement(cx.elt('Highlight', pos, end + 2, [cx.elt('HighlightMark', pos, pos + 2), cx.elt('HighlightMark', end, end + 2)]));
     },
   }, {
     name: 'Tag', before: 'Link',
@@ -222,6 +236,12 @@ function livePreview(host: () => EditorHost) {
             return false;
           }
           if (name === 'Tag') { add(node.from, node.to, Decoration.mark({ class: 'cm-tag', attributes: { 'data-tag': state.sliceDoc(node.from + 1, node.to) } })); return; }
+          if (name === 'Highlight') {
+            const marksOf = node.node.getChildren('HighlightMark');
+            if (marksOf.length === 2) add(marksOf[0].to, marksOf[1].from, Decoration.mark({ class: 'cm-highlight' }));
+            if (!touches(node.from, node.to)) for (const mark of marksOf) hide(mark.from, mark.to);
+            return;
+          }
           if (name === 'ListItem') {
             const mark = node.node.getChild('ListMark');
             if (!mark) return;
@@ -262,19 +282,21 @@ function livePreview(host: () => EditorHost) {
           }
           if (name === 'Table') { lineClass(node.from, node.to, 'cm-table'); return; }
           if (name === 'HTMLBlock') {
-            const match = ALIGNED_BLOCK.exec(state.sliceDoc(node.from, node.to));
+            // Only the first line is the aligned paragraph. Lines after it are normal text.
+            const first = doc.lineAt(node.from);
+            const match = ALIGNED_BLOCK.exec(first.text);
             if (!match) return;
             const align = match[2] || (match[1] === 'center' ? 'center' : 'left');
-            lineClass(node.from, node.to, `cm-align-${align}`);
-            if (/^h[1-6]$/.test(match[1])) lineClass(node.from, node.to, `cm-heading cm-h${match[1][1]}`);
-            const revealed = touchesLines(node.from, node.to);
+            add(first.from, first.from, Decoration.line({ class: `cm-align-${align}` }));
+            if (/^h[1-6]$/.test(match[1])) add(first.from, first.from, Decoration.line({ class: `cm-heading cm-h${match[1][1]}` }));
+            const revealed = touches(first.from, first.to);
             const openLength = match[0].indexOf('>') + 1;
-            const closeStart = node.from + match[0].lastIndexOf('</');
-            if (!revealed) { hide(node.from, node.from + openLength); hide(closeStart, node.to); }
+            const closeStart = first.from + match[0].lastIndexOf('</');
+            if (!revealed) { hide(first.from, first.from + openLength); hide(closeStart, first.from + match[0].trimEnd().length); }
             // Inline HTML inside the block is not parsed by Lezer, so tag pairs are found by text.
             for (const pair of match[3].matchAll(/<([a-z]+)>([\s\S]*?)<\/\1>/gi)) {
               if (!INLINE_TAGS.has(pair[1].toLowerCase()) || pair.index === undefined) continue;
-              const start = node.from + openLength + pair.index, openEnd = start + pair[1].length + 2, closeFrom = start + pair[0].length - pair[1].length - 3;
+              const start = first.from + openLength + pair.index, openEnd = start + pair[1].length + 2, closeFrom = start + pair[0].length - pair[1].length - 3;
               add(openEnd, closeFrom, Decoration.mark({ class: `cm-html cm-html-${pair[1].toLowerCase()}` }));
               if (!revealed) { hide(start, openEnd); hide(closeFrom, start + pair[0].length); }
             }
@@ -298,6 +320,35 @@ function livePreview(host: () => EditorHost) {
       return Decoration.set(marks.map(m => m.deco.range(m.from, m.to)), true);
     }
   }, { decorations: plugin => plugin.decorations });
+}
+
+// A small toolbar floats above selected text.
+const SELECTION_TOOLS: [string, string, string, keyof typeof commands][] = [['B', 'Bold', 'is-bold', 'bold'], ['I', 'Italic', 'is-italic', 'italic'], ['U', 'Underline', 'is-underline', 'underline'], ['S', 'Strikethrough', 'is-strike', 'strike'], ['ab', 'Highlight', 'is-highlight', 'highlight'], ['<>', 'Inline code', 'is-code', 'code'], ['Link', 'Link', 'is-link', 'link']];
+function selectionToolbar() {
+  const tooltips = (state: EditorState): readonly Tooltip[] => {
+    const range = state.selection.main;
+    if (range.empty || !state.sliceDoc(range.from, range.to).trim()) return [];
+    return [{
+      pos: range.from, end: range.to, above: true, strictSide: false, arrow: false,
+      create: (view: EditorView) => {
+        const dom = document.createElement('div');
+        dom.className = 'cm-selection-toolbar'; dom.setAttribute('role', 'toolbar'); dom.setAttribute('aria-label', 'Selection formatting');
+        for (const [label, title, cls, name] of SELECTION_TOOLS) {
+          const button = document.createElement('button');
+          button.type = 'button'; button.className = cls; button.textContent = label; button.title = title; button.setAttribute('aria-label', title);
+          button.addEventListener('mousedown', event => event.preventDefault());
+          button.addEventListener('click', event => { event.preventDefault(); (commands[name] as (view: EditorView) => boolean)(view); view.focus(); });
+          dom.append(button);
+        }
+        return { dom };
+      },
+    }];
+  };
+  return StateField.define<readonly Tooltip[]>({
+    create: tooltips,
+    update(value, transaction) { return transaction.docChanged || transaction.selection ? tooltips(transaction.state) : value; },
+    provide: field => showTooltip.computeN([field], state => state.field(field)),
+  });
 }
 
 function wrapSelection(open: string, close = open) {
@@ -437,6 +488,7 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
     search({ top: true }),
     autocompletion({ override: [wikiCompletion(host)], icons: false, activateOnTyping: true }),
     modeCompartment.of(modeExtension(initialMode)),
+    selectionToolbar(),
     EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', 'aria-label': 'Note text' }),
     Prec.highest(keymap.of([
       { key: 'Enter', run: endEmptyListItem },

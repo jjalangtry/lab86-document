@@ -1,0 +1,34 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const JSZip = require('jszip');
+const { docxBuffer } = require('../electron/docx.cjs');
+
+test('Word export maps Markdown, inline HTML, and the note format', async () => {
+  const note = ['---', 'font: Georgia', 'line-height: 2', 'align: justify', 'page-numbers: true', '---', '# Heading', '', 'Plain **bold** *italic* <u>under</u> ==mark== [[Other|alias]] [site](https://example.com/?a=1&b=2).', '', '<p align="center">Centered **title**</p>', '', '- [x] done', '- [ ] open', '  - nested', '', '1. first', '2. second', '', '> quoted', '', '```', 'code line', '```', '', '| A | B |', '| --- | --- |', '| 1 | 2 |', ''].join('\n');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const buffer = await docxBuffer('Essay', note + '\n![[pic.png]]\n', { font: 'Georgia', lineHeight: 2, align: 'justify', pageNumbers: true, pageSize: 'A4', margin: 1.25 }, { 'pic.png': { type: 'png', data: png, width: 1, height: 1 } });
+  const zip = await JSZip.loadAsync(buffer);
+  const xml = await zip.file('word/document.xml').async('string');
+  assert.match(xml, /Heading/);
+  assert.match(xml, /<w:b\/>/);
+  assert.match(xml, /<w:i\/>/);
+  assert.match(xml, /<w:u w:val="single"\/>/);
+  assert.match(xml, /<w:highlight w:val="yellow"\/>/);
+  assert.match(xml, /alias/);
+  assert.match(xml, /w:jc w:val="both"/);
+  assert.match(xml, /w:jc w:val="center"/);
+  assert.match(xml, /w:line="480"/);
+  assert.match(xml, /☑ /);
+  assert.match(xml, /☐ /);
+  assert.match(xml, /code line/);
+  assert.match(xml, /<w:tbl>/);
+  assert.match(xml, /w:w="11906"/);
+  assert.match(xml, /w:top="1800"/);
+  assert.match(xml, /<w:drawing>/);
+  assert.ok(!xml.includes('<u>'));
+  assert.ok(!xml.includes('=='));
+  assert.match(await zip.file('word/styles.xml').async('string'), /w:ascii="Georgia"/);
+  assert.match(await zip.file('word/numbering.xml').async('string'), /w:numFmt w:val="decimal"/);
+  assert.match(await zip.file('word/footer1.xml').async('string'), /PAGE/);
+  assert.match(await zip.file('word/_rels/document.xml.rels').async('string'), /example\.com/);
+});

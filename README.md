@@ -29,6 +29,8 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 - The settings are stored at the top of the note as YAML frontmatter. Other Markdown tools keep them. The live preview shows them as one line. Click that line to open the Format pane.
 - Any font installed on the computer works. Select **Other font…** and type its name.
 - The formatting toolbar under the note header has bold, italic, underline, strikethrough, highlight, links, lists, quotes, code, alignment, and images. Hide it from the note menu.
+- A small toolbar floats above selected text with bold, italic, underline, strikethrough, highlight, code, and link.
+- Indented text stays a paragraph. Use three backticks for a code block.
 - Underline uses `<u>` tags. A centered or right-aligned paragraph uses `<p align="center">` tags. Both are normal Markdown with inline HTML. The live preview hides the tags.
 - The PDF export uses the font, size, spacing, alignment, indent, paper, margins, and page numbers of the note.
 
@@ -67,7 +69,7 @@ Saves use a temporary file and an atomic rename. If a save fails, the app shows 
 
 ## Export
 
-Export a note to PDF from the note menu or the command palette. The export uses the reading view layout. Page size, margin, and orientation are options in the export dialog.
+Export a note to PDF or Word from the note menu or the command palette. Both exports use the note format: font, size, line spacing, alignment, indent, paper size, margins, and page numbers. Orientation and the title are options in the export dialog. The Word export maps headings, lists, tasks, quotes, code, tables, links, images, underline, highlight, and aligned paragraphs.
 
 ## Build packages
 
@@ -88,10 +90,10 @@ npm test
 npm run test:desktop
 ```
 
-The unit tests cover the vault file operations and the PDF export. The desktop test uses Xvfb on Linux. It launches Electron with a temporary vault. It checks note creation, live preview, tasks, wikilinks, backlinks, the outline, history, reading view, rename, search, the quick switcher, the command palette, the file watcher, PDF export, and save on close.
+The unit tests cover the vault file operations, the frontmatter format, the PDF export, and the Word export. The desktop test uses Xvfb on Linux. It launches Electron with a temporary vault. It checks note creation, live preview, tasks, wikilinks, backlinks, the outline, history, reading view, rename, search, the quick switcher, the command palette, the file watcher, PDF export, and save on close.
 
 ## Implementation
 
-Electron provides the window, the file dialogs, the file watcher, and the PDF output. React provides the interface. CodeMirror 6 provides the editor with the Markdown parser from Lezer. The live preview is a CodeMirror view plugin that hides syntax marks with decorations. Marked and DOMPurify render the reading view. Radix primitives provide the menus, tooltips, and dialogs.
+Electron provides the window, the file dialogs, the file watcher, and the PDF output. React provides the interface. CodeMirror 6 provides the editor with the Markdown parser from Lezer. The live preview is a CodeMirror view plugin that hides syntax marks with decorations. Marked and DOMPurify render the reading view. The `docx` package writes Word files from the same Markdown tokens. Radix primitives provide the menus, tooltips, and dialogs.
 
 The renderer has no Node.js access. The preload exposes specific vault operations. Main-process handlers check the sender and keep all paths inside the vault. Images load through a `vault://` protocol that only serves image files from the vault. The app blocks external network requests and navigation.

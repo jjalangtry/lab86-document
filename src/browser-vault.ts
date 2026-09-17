@@ -77,6 +77,7 @@ if (!window.vault) {
       page.document.close(); page.print();
       return { fileName: `${title}.pdf` };
     },
+    exportDocx: async () => { throw Error('Word export is not available in the browser preview.'); },
     openExternal: async url => { window.open(url, '_blank', 'noopener'); },
     closeReady: async () => {},
     closeFailed: async () => {},

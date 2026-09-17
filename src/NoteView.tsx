@@ -21,6 +21,7 @@ type Props = {
   onOpenFormat: () => void;
   onInsertImage: () => void;
   onExport: () => void;
+  onExportDocx: () => void;
   onReveal: () => void;
   onTrash: () => void;
   onOpenLink: (target: string, heading?: string) => void;
@@ -111,6 +112,7 @@ export function NoteView(props: Props) {
           <MenuSeparator />
           <MenuItem onSelect={props.onOpenFormat}>Document format…</MenuItem>
           <MenuItem onSelect={props.onExport} hint={keys('Mod+Shift+E')}>Export to PDF…</MenuItem>
+          <MenuItem onSelect={props.onExportDocx}>Export to Word…</MenuItem>
           <MenuItem onSelect={props.onReveal}>Show in file manager</MenuItem>
           <MenuItem onSelect={() => { titleRef.current?.focus(); titleRef.current?.select(); }}>Rename</MenuItem>
           <MenuSeparator />

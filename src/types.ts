@@ -28,6 +28,7 @@ declare global {
       importImage(): Promise<string | null>;
       saveAttachment(name: string, data: Uint8Array): Promise<string>;
       exportPdf(title: string, html: string, options: PdfOptions): Promise<{ fileName: string } | null>;
+      exportDocx(title: string, text: string, options: PdfOptions, images: Record<string, string>): Promise<{ fileName: string } | null>;
       openExternal(url: string): Promise<void>;
       closeReady(): Promise<void>;
       closeFailed(message: string): Promise<void>;

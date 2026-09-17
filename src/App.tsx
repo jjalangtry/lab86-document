@@ -36,6 +36,7 @@ export default function App() {
   const [palette, setPalette] = useState<null | 'files' | 'commands'>(null);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [pdfOpen, setPdfOpen] = useState(false);
+  const [exportKind, setExportKind] = useState<'pdf' | 'docx'>('pdf');
   const [pdf, setPdf] = useState<PdfOptions>({ ...DEFAULT_FORMAT, pageSize: 'Letter', landscape: false, includeTitle: true });
   const [confirmTrash, setConfirmTrash] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -260,9 +261,10 @@ export default function App() {
     view.dispatch({ changes: { from: 0, to: oldEnd, insert: next.slice(0, newEnd) } });
   }, []);
   const openFormat = useCallback(() => { setRight(true); setRightTab('format'); }, []);
-  const openPdf = useCallback(() => {
+  const openPdf = useCallback((kind: 'pdf' | 'docx' = 'pdf') => {
     const current = formatOf(editorRef.current?.text() ?? '');
     setPdf(previous => ({ ...previous, pageSize: current.paper, margin: current.margin, pageNumbers: current.pageNumbers }));
+    setExportKind(kind);
     setPdfOpen(true);
   }, []);
   const hostRef = useRef({ resolve: (target: string) => resolve(target, openRef.current || undefined), noteNames: () => notesRef.current.map(n => noteStem(n.path)).sort(), openLink, openExternal, openTag, saveImage, onChange, openFormat });
@@ -287,11 +289,22 @@ export default function App() {
       await flush();
       const value = notesRef.current.find(n => n.path === path)?.text ?? '';
       const current = formatOf(value);
-      const result = await api.exportPdf(noteName(path), renderMarkdown(value, path, resolve), { ...pdf, font: current.font, size: current.size, lineHeight: current.lineHeight, align: current.align, indent: current.indent });
+      const options = { ...pdf, font: current.font, size: current.size, lineHeight: current.lineHeight, align: current.align, indent: current.indent };
+      let result: { fileName: string } | null;
+      if (exportKind === 'docx') {
+        // The Word converter runs in the main process. Image targets are resolved here.
+        const images: Record<string, string> = {};
+        for (const match of value.matchAll(/!\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]|!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+          const target = (match[1] || decodeURIComponent(match[2] || '')).trim();
+          const resolved = target ? resolve(target, path) : null;
+          if (resolved) images[target] = resolved;
+        }
+        result = await api.exportDocx(noteName(path), value, options, images);
+      } else result = await api.exportPdf(noteName(path), renderMarkdown(value, path, resolve), options);
       if (result) setToast(`Exported ${result.fileName}`);
       setPdfOpen(false);
     } catch (e) { fail(e); } finally { setBusy(false); }
-  }, [busy, fail, flush, pdf, resolve]);
+  }, [busy, exportKind, fail, flush, pdf, resolve]);
   const insertImage = useCallback(async () => {
     try {
       const path = await api.importImage();
@@ -320,7 +333,8 @@ export default function App() {
     { id: 'backlinks', name: 'Show backlinks', run: () => { setRight(true); setRightTab('backlinks'); } },
     { id: 'back', name: 'Back', hint: isMac ? '⌃⌥←' : 'Ctrl+Alt+←', run: () => go(-1) },
     { id: 'forward', name: 'Forward', hint: isMac ? '⌃⌥→' : 'Ctrl+Alt+→', run: () => go(1) },
-    { id: 'export-pdf', name: 'Export to PDF', hint: keys('Mod+Shift+E'), run: openPdf, when: !!open },
+    { id: 'export-pdf', name: 'Export to PDF', hint: keys('Mod+Shift+E'), run: () => openPdf('pdf'), when: !!open },
+    { id: 'export-docx', name: 'Export to Word', run: () => openPdf('docx'), when: !!open },
     { id: 'format', name: 'Document format', run: openFormat, when: !!open },
     { id: 'toggle-toolbar', name: toolbar ? 'Hide formatting toolbar' : 'Show formatting toolbar', run: () => setToolbar(v => !v) },
     { id: 'insert-image', name: 'Insert image from computer', run: () => void insertImage(), when: !!open && mode !== 'reading' },
@@ -479,7 +493,7 @@ export default function App() {
       {open ? <NoteView path={open} text={text} mode={mode} resolve={resolve} format={format} toolbar={toolbar} host={host} editorRef={editorRef} articleRef={articleRef} focusTitle={focusTitle} justRenamed={renamedRef.current === open}
         onRename={name => renameEntry(open, name)} onToggleReading={() => setMode(m => m === 'reading' ? editModeRef.current : 'reading')} onToggleSource={() => setMode(m => m === 'source' ? 'live' : 'source')}
         onToggleToolbar={() => setToolbar(v => !v)} onOpenFormat={openFormat} onInsertImage={() => void insertImage()}
-        onExport={openPdf} onReveal={() => void api.reveal(open).catch(fail)} onTrash={() => setConfirmTrash(open)} onOpenLink={openLink} onOpenTag={openTag} onOpenExternal={openExternal} />
+        onExport={() => openPdf('pdf')} onExportDocx={() => openPdf('docx')} onReveal={() => void api.reveal(open).catch(fail)} onTrash={() => setConfirmTrash(open)} onOpenLink={openLink} onOpenTag={openTag} onOpenExternal={openExternal} />
         : <div className="empty-state">
           <p className="empty-title">No note is open</p>
           <div className="empty-actions">
@@ -507,8 +521,9 @@ export default function App() {
 
     <Palette open={palette === 'files'} title="Quick switcher" placeholder="Find or create a note…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={() => setPalette(null)} empty="No notes found" />
     <Palette open={palette === 'commands'} title="Command palette" placeholder="Select a command…" items={paletteItems} query={paletteQuery} onQuery={setPaletteQuery} onClose={() => setPalette(null)} empty="No commands found" />
-    <Dialog open={pdfOpen} onOpenChange={setPdfOpen} title="Export to PDF" description={open ? noteName(open) : ''}>
+    <Dialog open={pdfOpen} onOpenChange={setPdfOpen} title={exportKind === 'docx' ? 'Export to Word' : 'Export to PDF'} description={open ? noteName(open) : ''}>
       <form className="form" onSubmit={e => { e.preventDefault(); void exportPdf(); }}>
+        <label>Format<select value={exportKind} onChange={e => setExportKind(e.target.value as 'pdf' | 'docx')}><option value="pdf">PDF</option><option value="docx">Word (.docx)</option></select></label>
         <label>Page size<select value={pdf.pageSize} onChange={e => setPdf({ ...pdf, pageSize: e.target.value as PdfOptions['pageSize'] })}><option>Letter</option><option>A4</option><option>Legal</option></select></label>
         <label>Margins<select value={pdf.margin} onChange={e => setPdf({ ...pdf, margin: Number(e.target.value) })}>{[...new Set([0, 0.5, 0.75, 1, 1.25, 1.5, pdf.margin])].sort((a, b) => a - b).map(margin => <option key={margin} value={margin}>{margin === 0 ? 'None' : `${margin} in`}</option>)}</select></label>
         <label className="check"><input type="checkbox" checked={pdf.pageNumbers} onChange={e => setPdf({ ...pdf, pageNumbers: e.target.checked })} />Page numbers</label>

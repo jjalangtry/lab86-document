@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import JSZip from 'jszip';
 
 const data = await fs.mkdtemp(path.join(os.tmpdir(), 'document-desktop-'));
 const vault = path.join(data, 'Vault');
@@ -101,7 +102,7 @@ try {
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.cm-editor')).fontFamily)).toContain('Georgia');
 
   // The toolbar writes underline tags and aligned paragraphs. Live preview hides the tags.
-  const formatting = page.getByRole('toolbar', { name: 'Formatting' });
+  const formatting = page.getByRole('toolbar', { name: 'Formatting', exact: true });
   await body.locator('.cm-line').last().click();
   await page.keyboard.press('End');
   await page.keyboard.press('Shift+Home');
@@ -111,6 +112,37 @@ try {
   await expect.poll(() => read('First note.md')).toContain('<p align="center"><u>Plain line</u></p>');
   await page.keyboard.press('Control+Home');
   await expect(body.locator('.cm-line.cm-align-center')).toHaveCount(1);
+
+  // Highlight from the toolbar renders in the live preview. The selection toolbar floats above selected text.
+  const selectWords = async (count, skip = 0) => {
+    await body.locator('.cm-line.cm-h1').click();
+    await page.keyboard.press('End');
+    for (let i = 0; i < skip; i++) await page.keyboard.press('ArrowLeft');
+    for (let i = 0; i < count; i++) await page.keyboard.press('Shift+ArrowLeft');
+  };
+  await selectWords('Heading one'.length);
+  await expect(page.getByRole('toolbar', { name: 'Selection formatting' })).toBeVisible();
+  await formatting.getByRole('button', { name: /^Highlight/ }).click();
+  await expect.poll(() => read('First note.md')).toContain('# ==Heading one==');
+  await body.locator('.cm-line').last().click();
+  await expect(body.locator('.cm-highlight')).toHaveText('Heading one');
+  await expect(body).not.toContainText('==');
+  await selectWords('Heading one'.length, 2);
+  await page.getByRole('toolbar', { name: 'Selection formatting' }).getByRole('button', { name: 'Highlight', exact: true }).click();
+  await expect.poll(() => read('First note.md')).toContain('# Heading one');
+  await expect(page.getByRole('toolbar', { name: 'Selection formatting' })).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('toolbar', { name: 'Selection formatting' })).toBeHidden();
+
+  // Indented text stays a paragraph in both views.
+  await page.keyboard.press('Control+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('\tIndented sentence.');
+  await expect(body.locator('.cm-line.cm-codeblock')).toHaveCount(0);
+  await page.getByTestId('mode-toggle').click();
+  await expect(article.locator('pre')).toHaveCount(0);
+  await expect(article).toContainText('Indented sentence.');
+  await page.getByTestId('mode-toggle').click();
   await expect(body.locator('.cm-html-u')).toHaveText('Plain line');
   await expect(body).not.toContainText('<u>');
   await page.getByTestId('mode-toggle').click();
@@ -188,6 +220,21 @@ try {
   await pdfTask.destroy();
   await fs.copyFile(path.join(data, 'export.pdf'), path.join(output, 'export.pdf'));
 
+  // Word export.
+  await app.evaluate(({ dialog }, directory) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: `${directory}/export.docx` }); }, data);
+  await page.keyboard.press('Control+p');
+  await page.getByRole('combobox', { name: 'Select a command…' }).fill('export to word');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Exported export.docx' })).toBeVisible({ timeout: 20000 });
+  const word = await JSZip.loadAsync(await fs.readFile(path.join(data, 'export.docx')));
+  const wordXml = await word.file('word/document.xml').async('string');
+  expect(wordXml).toContain('Heading one');
+  expect(wordXml).toContain('<w:u w:val="single"/>');
+  expect(wordXml).toContain('w:jc w:val="center"');
+  expect(await word.file('word/footer1.xml').async('string')).toContain('PAGE');
+  await fs.copyFile(path.join(data, 'export.docx'), path.join(output, 'export.docx'));
+
   // Unsaved text is written before the window closes.
   await page.locator('.cm-content .cm-line').last().click();
   await page.keyboard.press('Control+End');
@@ -203,7 +250,7 @@ try {
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('First note');
   await expect(page.locator('.cm-content')).toContainText('Last words.');
   expect(errors).toEqual([]);
-  console.log('PASS: vault, live preview, tasks, wikilinks, backlinks, outline, history, reading view, format, toolbar, rename, search, quick switcher, command palette, watcher, PDF export, close and reopen.');
+  console.log('PASS: vault, live preview, tasks, wikilinks, backlinks, outline, history, reading view, format, toolbar, highlight, selection toolbar, rename, search, quick switcher, command palette, watcher, PDF and Word export, close and reopen.');
 } catch (error) {
   try { const page = await app?.firstWindow(); await page?.screenshot({ path: path.join(output, 'failure.png') }); console.error(await page?.locator('body').innerText()); } catch { /* the app may have exited */ }
   throw error;

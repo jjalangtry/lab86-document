@@ -333,3 +333,15 @@ kbd { font-family: var(--font-ui); font-size: 11px; color: var(--text-faint); }
 .format-pane h3 { margin: 6px 8px 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); }
 .format-pane .reset { margin: 4px 8px; font-size: 12px; color: var(--text-muted); text-decoration: underline; text-underline-offset: 3px; }
 .format-pane .reset:hover { color: var(--text-normal); }
+
+/* Highlight and selection toolbar */
+.cm-highlight { background: var(--mark); border-radius: 2px; padding: 0 .05em; }
+.cm-tooltip.cm-selection-toolbar-tip, .cm-tooltip:has(> .cm-selection-toolbar) { border: 0; background: transparent; box-shadow: none; }
+.cm-selection-toolbar { display: flex; gap: 1px; padding: 3px; background: var(--bg-secondary-alt); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font: 13px var(--font-ui); }
+.cm-selection-toolbar button { min-width: 28px; height: 26px; padding: 0 7px; border-radius: 5px; color: var(--text-normal); }
+.cm-selection-toolbar button:hover { background: var(--bg-hover); }
+.cm-selection-toolbar .is-bold { font-weight: 700; } .cm-selection-toolbar .is-italic { font-style: italic; font-family: Georgia, serif; }
+.cm-selection-toolbar .is-underline { text-decoration: underline; } .cm-selection-toolbar .is-strike { text-decoration: line-through; }
+.cm-selection-toolbar .is-highlight { background: var(--mark); } .cm-selection-toolbar .is-code { font-family: var(--font-mono); font-size: 12px; }
+.cm-selection-toolbar .is-link { color: var(--text-accent); font-size: 12px; }
+.cm-editor:not(.cm-focused) .cm-selection-toolbar { display: none; }

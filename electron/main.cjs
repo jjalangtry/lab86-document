@@ -4,6 +4,8 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Vault, isImage } = require('./vault.cjs');
 const { inlineImages, printDocument, printOptions } = require('./export.cjs');
+const { docxBuffer } = require('./docx.cjs');
+const { nativeImage } = require('electron');
 const { TreeWatcher } = require('./watcher.cjs');
 
 if (process.env.LABDOC_TEST_DATA) app.setPath('userData', process.env.LABDOC_TEST_DATA);
@@ -140,6 +142,25 @@ app.whenReady().then(async () => {
     await fs.writeFile(result.filePath, await pdfBuffer(title, body, options));
     return { fileName: path.basename(result.filePath) };
   });
+  handle('export:docx', async (title, text, options, imagePaths) => {
+    if (typeof title !== 'string' || typeof text !== 'string' || text.length > 20_000_000) throw Error('Invalid export request.');
+    const result = await dialog.showSaveDialog(window, { title: 'Export to Word', defaultPath: path.join(app.getPath('documents'), `${title.replace(/[/\\:*?"<>|]/g, '-') || 'Note'}.docx`), filters: [{ name: 'Word document', extensions: ['docx'] }] });
+    if (result.canceled || !result.filePath) return null;
+    const images = {};
+    for (const [target, relative] of Object.entries(imagePaths && typeof imagePaths === 'object' ? imagePaths : {}).slice(0, 200)) {
+      try {
+        const full = requireVault().resolve(String(relative));
+        if (!isImage(full) || (await fs.stat(full)).size > 25_000_000) continue;
+        const picture = nativeImage.createFromPath(full);
+        if (picture.isEmpty()) continue;
+        const { width, height } = picture.getSize();
+        const jpeg = /\.jpe?g$/i.test(full);
+        images[target] = { type: jpeg ? 'jpg' : 'png', data: jpeg ? await fs.readFile(full) : picture.toPNG(), width, height };
+      } catch { /* unreadable images are skipped */ }
+    }
+    await fs.writeFile(result.filePath, await docxBuffer(title, text, options, images));
+    return { fileName: path.basename(result.filePath) };
+  });
   handle('shell:external', url => {
     if (typeof url !== 'string' || !/^(https?:\/\/|mailto:)/i.test(url) || url.length > 4000) throw Error('This link cannot be opened.');
     return shell.openExternal(url);
@@ -179,6 +200,7 @@ app.whenReady().then(async () => {
       { type: 'separator' },
       { label: 'Open vault…', click: command('open-vault') },
       { label: 'Export to PDF…', accelerator: 'CmdOrCtrl+Shift+E', click: command('export-pdf') },
+      { label: 'Export to Word…', click: command('export-docx') },
       { label: 'Show in file manager', click: command('reveal') },
       { type: 'separator' },
       { role: 'close' },

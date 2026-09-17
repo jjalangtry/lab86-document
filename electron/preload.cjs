@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('vault', {
   importImage: () => invoke('attachment:import'),
   saveAttachment: (name, data) => invoke('attachment:save', name, data),
   exportPdf: (title, html, options) => invoke('export:pdf', title, html, options),
+  exportDocx: (title, text, options, images) => invoke('export:docx', title, text, options, images),
   openExternal: url => invoke('shell:external', url),
   closeReady: () => invoke('app:close-ready'),
   closeFailed: message => invoke('app:close-failed', message),

@@ -1,6 +1,6 @@
 {
   "name": "lab86-document",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "A desktop Markdown editor for a folder of notes.",
   "author": "Jakob Langtry",
@@ -88,6 +88,7 @@
     "artifactName": "Document-${version}-${os}-${arch}.${ext}"
   },
   "dependencies": {
-    "@radix-ui/react-context-menu": "^2.3.7"
+    "@radix-ui/react-context-menu": "^2.3.7",
+    "docx": "^9.7.1"
   }
 }
