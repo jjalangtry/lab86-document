@@ -1,0 +1,93 @@
+{
+  "name": "lab86-document",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A desktop Markdown editor for a folder of notes.",
+  "author": "Jakob Langtry",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "start": "npm run build && electron .",
+    "test": "node --test tests/*.test.cjs",
+    "test:desktop": "npm run build && xvfb-run -a node tests/desktop.mjs && xvfb-run -a node tests/tab-indent.desktop.mjs",
+    "package": "npm run build && electron-builder --dir",
+    "package:mac": "node scripts/package-mac.mjs",
+    "package:windows": "npm run build && electron-builder --win portable --x64",
+    "preview": "vite build && vite preview --port 4173"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.5",
+    "@codemirror/view": "^6.43.12",
+    "@lezer/common": "^1.5.2",
+    "@lezer/highlight": "^1.2.3",
+    "@lezer/markdown": "^1.7.2",
+    "@playwright/test": "1.63.0",
+    "@radix-ui/react-dialog": "1.1.23",
+    "@radix-ui/react-dropdown-menu": "2.1.24",
+    "@radix-ui/react-tooltip": "1.2.16",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "codemirror": "^6.0.2",
+    "dompurify": "^3.4.15",
+    "electron": "44.4.1",
+    "electron-builder": "26.15.3",
+    "lucide-react": "1.46.0",
+    "marked": "^18.0.13",
+    "pdfjs-dist": "6.3.289",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.0"
+  },
+  "build": {
+    "appId": "com.lab86.document",
+    "productName": "Document",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "resources/icon.png"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "category": "Office"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "icon": "resources/icon.png",
+    "artifactName": "Document-${version}-${os}-${arch}.${ext}"
+  },
+  "dependencies": {
+    "@radix-ui/react-context-menu": "^2.3.7"
+  }
+}
