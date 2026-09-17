@@ -180,9 +180,13 @@ function livePreview(host: () => EditorHost) {
       };
       const spaceAfter = (pos: number) => (state.sliceDoc(pos, pos + 1) === ' ' ? 1 : 0);
       const openTags: { name: string; from: number; to: number }[] = [];
+      // A revealed frontmatter block shows as plain source lines, not as headings or rules.
+      const frontmatterEnd = parseFrontmatter(state.doc.sliceString(0, Math.min(state.doc.length, 20000)))?.end ?? 0;
+      if (frontmatterEnd) lineClass(0, frontmatterEnd - 1, 'cm-frontmatter-line');
       for (const { from, to } of view.visibleRanges) {
         syntaxTree(state).iterate({ from, to, enter: node => {
           const name = node.name;
+          if (frontmatterEnd && node.from < frontmatterEnd && name !== 'Document') return false;
           if (/^ATXHeading[1-6]$/.test(name)) {
             add(doc.lineAt(node.from).from, doc.lineAt(node.from).from, Decoration.line({ class: `cm-heading cm-h${name.slice(-1)}` }));
             const mark = node.node.getChild('HeaderMark');
