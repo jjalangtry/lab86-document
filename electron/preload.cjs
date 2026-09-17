@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('vault', {
   platform: process.platform,
   info: () => invoke('app:info'),
   setTheme: theme => invoke('app:theme', theme),
+  setChrome: theme => invoke('app:chrome', theme),
   chooseVault: create => invoke('vault:choose', create),
   openVault: directory => invoke('vault:open', directory),
   forgetVault: directory => invoke('vault:forget', directory),

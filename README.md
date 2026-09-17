@@ -28,15 +28,18 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 - Open **Format** in the right sidebar to set the font, the font size, the line spacing, the alignment, the first-line indent, the paper size, the margins, and page numbers.
 - The settings are stored at the top of the note as YAML frontmatter. Other Markdown tools keep them. The live preview shows them as one line. Click that line to open the Format pane.
 - Any font installed on the computer works. Select **Other font…** and type its name.
-- The formatting toolbar under the note header has bold, italic, underline, strikethrough, highlight, links, lists, quotes, code, alignment, and images. Hide it from the note menu.
-- A small toolbar floats above selected text with bold, italic, underline, strikethrough, highlight, code, and link.
+- A toolbar floats above selected text. It has the paragraph style, bold, italic, underline, strikethrough, highlight, code, link, lists, tasks, quote, alignment, and image insert.
 - Indented text stays a paragraph. Use three backticks for a code block.
 - Underline uses `<u>` tags. A centered or right-aligned paragraph uses `<p align="center">` tags. Both are normal Markdown with inline HTML. The live preview hides the tags.
 - The PDF export uses the font, size, spacing, alignment, indent, paper, margins, and page numbers of the note.
 
 ## Navigate
 
-- The left sidebar shows the files and the search. Right-click a file or folder for more actions.
+- Notes open in tabs in the title bar. Ctrl+click or middle-click a file or link to open it in a new tab. Ctrl+T opens a tab, Ctrl+W closes it, Ctrl+Tab moves to the next tab.
+- The left sidebar shows the files, the search, and the tags. Right-click a file or folder for more actions. Drag a file onto a folder to move it.
+- Hold the pointer over a wikilink to see a preview of the linked note.
+- `> [!note] Title` starts a callout. Types include note, tip, warning, success, question, failure, example, and quote.
+- Ctrl+D opens today's daily note in the `Daily` folder.
 - The right sidebar shows the outline and the backlinks of the open note.
 - The quick switcher opens a note by name. Type a name that does not exist and press Enter to make a note.
 - The command palette lists all commands.
@@ -47,6 +50,9 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 | Control | Shortcut |
 | --- | --- |
 | New note | Ctrl/Cmd+N |
+| New tab / Close tab | Ctrl/Cmd+T / W |
+| Next / Previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Daily note | Ctrl/Cmd+D |
 | Quick switcher | Ctrl/Cmd+O |
 | Command palette | Ctrl/Cmd+P |
 | Search in all notes | Ctrl/Cmd+Shift+F |
@@ -60,6 +66,10 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 | Link | Ctrl/Cmd+K |
 | Task list | Ctrl/Cmd+L |
 | Export to PDF | Ctrl/Cmd+Shift+E |
+
+## Window
+
+On Windows the app uses a hidden title bar with the native caption buttons, so snap layouts and the system menu work. The tabs live in the title bar. Right-click in the editor for the native menu with spelling suggestions.
 
 ## Files
 

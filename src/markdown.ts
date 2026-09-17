@@ -115,6 +115,8 @@ const alignedBlock: TokenizerAndRendererExtension = {
   renderer(token) { return `<${token.tag} style="text-align:${token.align}">${this.parser.parseInline(token.tokens || [])}</${token.tag}>\n`; },
 };
 
+const CALLOUT_KINDS: Record<string, string> = { note: 'note', info: 'note', todo: 'note', abstract: 'tip', summary: 'tip', tldr: 'tip', tip: 'tip', hint: 'tip', important: 'tip', success: 'success', check: 'success', done: 'success', question: 'question', help: 'question', faq: 'question', warning: 'warning', caution: 'warning', attention: 'warning', failure: 'failure', fail: 'failure', missing: 'failure', danger: 'failure', error: 'failure', bug: 'failure', example: 'example', quote: 'quote', cite: 'quote' };
+
 export function renderMarkdown(source: string, notePath: string, resolve: Resolver): string {
   const text = stripFrontmatter(source);
   const marked = new Marked({ gfm: true, breaks: false, extensions: [alignedBlock, wikilink(resolve, notePath), tag, highlight] });
@@ -122,6 +124,17 @@ export function renderMarkdown(source: string, notePath: string, resolve: Resolv
     // Indented text is a paragraph, not a code block. Fenced code blocks still work.
     tokenizer: { code: () => undefined },
     renderer: {
+      // > [!note] Title becomes a callout box, like Obsidian.
+      blockquote(token: Tokens.Blockquote) {
+        const body = this.parser.parse(token.tokens);
+        const match = /^<p>\[!([\w-]+)\][+-]?[ \t]*([^\n<]*)\n?/.exec(body);
+        if (!match) return `<blockquote>\n${body}</blockquote>\n`;
+        const type = match[1].toLowerCase();
+        const kind = CALLOUT_KINDS[type] || 'note';
+        const title = match[2].trim() || type[0].toUpperCase() + type.slice(1);
+        const rest = body.slice(match[0].length).replace(/^<\/p>\n?/, '');
+        return `<div class="callout callout-${kind}" data-callout="${escapeHtml(type)}"><p class="callout-title">${title}</p>${rest.trim() ? (rest.startsWith('<') ? rest : `<p>${rest}`) : ''}</div>\n`;
+      },
       link(token: Tokens.Link) {
         const inner = this.parser.parseInline(token.tokens);
         if (isExternal(token.href)) return `<a href="${escapeHtml(token.href)}" class="external-link" title="${escapeHtml(token.title || token.href)}">${inner}</a>`;
@@ -234,4 +247,18 @@ export function fuzzyScore(query: string, text: string): number | null {
     position = index + 1;
   }
   return score - t.length * 0.05;
+}
+
+// Counts every #tag across the notes. Frontmatter and fenced code are skipped.
+export function tagCounts(notes: Note[]): { tag: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const note of notes) {
+    let fenced = false;
+    for (const line of stripFrontmatter(note.text).split('\n')) {
+      if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+      if (fenced) continue;
+      for (const match of line.matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]*[\p{L}_][\p{L}\p{N}_/-]*)/gu)) counts.set(match[1], (counts.get(match[1]) || 0) + 1);
+    }
+  }
+  return [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }

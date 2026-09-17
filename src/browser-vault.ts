@@ -48,6 +48,7 @@ if (!window.vault) {
     platform: info().platform,
     info: async () => info(),
     setTheme: async theme => { state.theme = theme; persist(); },
+    setChrome: async () => {},
     chooseVault: async () => { state.open = true; return info(); },
     openVault: async () => { state.open = true; return info(); },
     forgetVault: async () => info(),

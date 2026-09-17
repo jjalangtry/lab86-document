@@ -1,5 +1,5 @@
 import { Compartment, EditorSelection, EditorState, Prec, StateField, type Extension } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, keymap, showTooltip, type Tooltip } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, hoverTooltip, keymap, showTooltip, type Tooltip } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
@@ -21,7 +21,13 @@ export type EditorHost = {
   saveImage: (file: File) => Promise<string | null>;
   onChange: (text: string) => void;
   openFormat: () => void;
+  // Mounts the selection toolbar into a tooltip element. Returns a cleanup function.
+  mountToolbar: (dom: HTMLElement, view: EditorView) => () => void;
+  // Returns a rendered preview of a linked note for hover cards.
+  preview: (target: string) => { title: string; html: string } | null;
 };
+export const CALLOUT_TYPES: Record<string, string> = { note: 'note', info: 'note', todo: 'note', abstract: 'tip', summary: 'tip', tldr: 'tip', tip: 'tip', hint: 'tip', important: 'tip', success: 'success', check: 'success', done: 'success', question: 'question', help: 'question', faq: 'question', warning: 'warning', caution: 'warning', attention: 'warning', failure: 'failure', fail: 'failure', missing: 'failure', danger: 'failure', error: 'failure', bug: 'failure', example: 'example', quote: 'quote', cite: 'quote' };
+const CALLOUT_MARK = /^(\s*>\s*)\[!([\w-]+)\]([+-]?)[ \t]*/;
 
 const ALIGNED_BLOCK = /^<(p|h[1-6]|div|center)(?:\s+align="(left|center|right|justify)")?\s*>([\s\S]*?)<\/\1>\s*$/;
 const INLINE_TAGS = new Set(['u', 'sub', 'sup', 'mark', 'ins', 'del', 's', 'small']);
@@ -118,6 +124,11 @@ class CheckboxWidget extends WidgetType {
     return input;
   }
 }
+class CalloutWidget extends WidgetType {
+  constructor(readonly label: string) { super(); }
+  eq(other: CalloutWidget) { return other.label === this.label; }
+  toDOM() { const span = document.createElement('span'); span.className = 'cm-callout-label'; span.textContent = this.label; return span; }
+}
 class ImageWidget extends WidgetType {
   constructor(readonly src: string, readonly alt: string) { super(); }
   eq(other: ImageWidget) { return other.src === this.src && other.alt === this.alt; }
@@ -200,6 +211,9 @@ function livePreview(host: () => EditorHost) {
             return;
           }
           if (name === 'Link') {
+            // A callout marker such as [!tip] looks like a link. The blockquote branch handles it.
+            const lineOf = doc.lineAt(node.from), calloutMark = CALLOUT_MARK.exec(lineOf.text);
+            if (calloutMark && node.from < lineOf.from + calloutMark[0].length) return false;
             const linkMarks = node.node.getChildren('LinkMark'), url = node.node.getChild('URL');
             const href = url ? state.sliceDoc(url.from, url.to) : '';
             if (linkMarks.length >= 2 && !touches(node.from, node.to)) {
@@ -259,8 +273,18 @@ function livePreview(host: () => EditorHost) {
             return;
           }
           if (name === 'Blockquote') {
-            lineClass(node.from, node.to, 'cm-quote');
-            if (!touchesLines(node.from, node.to)) for (const mark of node.node.getChildren('QuoteMark')) hide(mark.from, mark.to + spaceAfter(mark.to));
+            const first = doc.lineAt(node.from);
+            const callout = CALLOUT_MARK.exec(first.text);
+            const kind = callout ? (CALLOUT_TYPES[callout[2].toLowerCase()] || 'note') : null;
+            lineClass(node.from, node.to, kind ? `cm-quote cm-callout cm-callout-${kind}` : 'cm-quote');
+            const revealed = touchesLines(node.from, node.to);
+            if (!revealed) for (const mark of node.node.getChildren('QuoteMark')) hide(mark.from, mark.to + spaceAfter(mark.to));
+            if (callout) {
+              add(first.from, first.from, Decoration.line({ class: 'cm-callout-title' }));
+              const markFrom = first.from + callout[1].length, markTo = first.from + callout[0].length;
+              const hasTitle = first.text.length > callout[0].length;
+              if (!revealed) add(markFrom, Math.min(markTo, first.to), hasTitle ? Decoration.replace({}) : Decoration.replace({ widget: new CalloutWidget(callout[2][0].toUpperCase() + callout[2].slice(1).toLowerCase()) }));
+            }
             return;
           }
           if (name === 'FencedCode') {
@@ -327,8 +351,7 @@ function livePreview(host: () => EditorHost) {
 }
 
 // A small toolbar floats above selected text.
-const SELECTION_TOOLS: [string, string, string, keyof typeof commands][] = [['B', 'Bold', 'is-bold', 'bold'], ['I', 'Italic', 'is-italic', 'italic'], ['U', 'Underline', 'is-underline', 'underline'], ['S', 'Strikethrough', 'is-strike', 'strike'], ['ab', 'Highlight', 'is-highlight', 'highlight'], ['<>', 'Inline code', 'is-code', 'code'], ['Link', 'Link', 'is-link', 'link']];
-function selectionToolbar() {
+function selectionToolbar(host: () => EditorHost) {
   const tooltips = (state: EditorState): readonly Tooltip[] => {
     const range = state.selection.main;
     if (range.empty || !state.sliceDoc(range.from, range.to).trim()) return [];
@@ -336,15 +359,10 @@ function selectionToolbar() {
       pos: range.from, end: range.to, above: true, strictSide: false, arrow: false,
       create: (view: EditorView) => {
         const dom = document.createElement('div');
-        dom.className = 'cm-selection-toolbar'; dom.setAttribute('role', 'toolbar'); dom.setAttribute('aria-label', 'Selection formatting');
-        for (const [label, title, cls, name] of SELECTION_TOOLS) {
-          const button = document.createElement('button');
-          button.type = 'button'; button.className = cls; button.textContent = label; button.title = title; button.setAttribute('aria-label', title);
-          button.addEventListener('mousedown', event => event.preventDefault());
-          button.addEventListener('click', event => { event.preventDefault(); (commands[name] as (view: EditorView) => boolean)(view); view.focus(); });
-          dom.append(button);
-        }
-        return { dom };
+        dom.className = 'cm-selection-toolbar';
+        dom.addEventListener('mousedown', event => { if ((event.target as HTMLElement).tagName !== 'SELECT') event.preventDefault(); });
+        const cleanup = host().mountToolbar(dom, view);
+        return { dom, destroy: cleanup };
       },
     }];
   };
@@ -353,6 +371,31 @@ function selectionToolbar() {
     update(value, transaction) { return transaction.docChanged || transaction.selection ? tooltips(transaction.state) : value; },
     provide: field => showTooltip.computeN([field], state => state.field(field)),
   });
+}
+
+// Hovering a wikilink shows a card with the linked note.
+function linkPreview(host: () => EditorHost) {
+  return hoverTooltip((view, pos) => {
+    let target: string | null = null, from = pos, to = pos;
+    syntaxTree(view.state).iterate({ from: pos, to: pos, enter: node => {
+      if (node.name !== 'WikiLink') return;
+      const marksOf = node.node.getChildren('WikiLinkMark');
+      if (marksOf.length < 2) return;
+      const inner = view.state.sliceDoc(marksOf[0].to, marksOf[1].from);
+      target = inner.split('|')[0].replace(/#.*$/, '').trim(); from = node.from; to = node.to;
+    } });
+    if (!target) return null;
+    const card = host().preview(target);
+    if (!card) return null;
+    return { pos: from, end: to, above: true, create: () => {
+      const dom = document.createElement('div');
+      dom.className = 'cm-hover-preview';
+      const title = document.createElement('div'); title.className = 'cm-hover-preview-title'; title.textContent = card.title;
+      const body = document.createElement('div'); body.className = 'markdown cm-hover-preview-body'; body.innerHTML = card.html;
+      dom.append(title, body);
+      return { dom };
+    } };
+  }, { hoverTime: 350 });
 }
 
 function wrapSelection(open: string, close = open) {
@@ -492,7 +535,8 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
     search({ top: true }),
     autocompletion({ override: [wikiCompletion(host)], icons: false, activateOnTyping: true }),
     modeCompartment.of(modeExtension(initialMode)),
-    selectionToolbar(),
+    selectionToolbar(host),
+    linkPreview(host),
     EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', 'aria-label': 'Note text' }),
     Prec.highest(keymap.of([
       { key: 'Enter', run: endEmptyListItem },

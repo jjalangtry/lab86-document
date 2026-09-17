@@ -14,6 +14,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'vault', privileges: { standard:
 
 const entry = pathToFileURL(path.join(__dirname, '../dist/index.html')).href;
 const isMac = process.platform === 'darwin';
+const isWindows = process.platform === 'win32';
+const CHROME = { dark: { color: '#262626', symbolColor: '#dadada' }, light: { color: '#f4f4f4', symbolColor: '#222222' } };
 let window = null, vault = null, watcher = null, config = { vault: null, recent: [], theme: 'system' };
 let closing = false, quitting = false, closeTimer = null, closeDialogOpen = false;
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
@@ -94,6 +96,7 @@ app.whenReady().then(async () => {
   if (config.vault) { try { await setVault(config.vault); } catch { await setVault(null); } }
 
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  if (!isMac) { try { session.defaultSession.setSpellCheckerLanguages(['en-US']); } catch { /* unavailable */ } }
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !/^(file:|data:|devtools:|vault:)/.test(details.url) }));
   protocol.handle('vault', request => {
     try {
@@ -105,6 +108,8 @@ app.whenReady().then(async () => {
   });
 
   handle('app:info', () => vaultInfo());
+  // The renderer reports the effective theme so the native caption buttons match it.
+  handle('app:chrome', theme => { if (isWindows && window && !window.isDestroyed()) { try { window.setTitleBarOverlay(CHROME[theme === 'light' ? 'light' : 'dark']); } catch { /* not supported */ } } });
   handle('app:theme', async theme => { if (!['system', 'light', 'dark'].includes(theme)) throw Error('Unknown theme.'); config.theme = theme; nativeTheme.themeSource = theme; await saveConfig(); });
   handle('vault:choose', async create => {
     const result = await dialog.showOpenDialog(window, { title: create ? 'Choose a folder for the new vault' : 'Open folder as vault', buttonLabel: create ? 'Create vault' : 'Open vault', defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory', 'promptToCreate'] });
@@ -174,12 +179,23 @@ app.whenReady().then(async () => {
       width: 1360, height: 900, minWidth: 760, minHeight: 500,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
       title: 'Document', icon: path.join(__dirname, '../resources/icon.png'),
-      titleBarStyle: isMac ? 'hiddenInset' : 'default',
+      titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
+      titleBarOverlay: isWindows ? { ...CHROME[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'], height: 40 } : undefined,
       trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
+      autoHideMenuBar: !isMac,
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
+    // A native context menu in text fields: spelling suggestions and the edit actions.
+    window.webContents.on('context-menu', (_event, params) => {
+      if (!params.isEditable) return;
+      const template = [];
+      for (const suggestion of params.dictionarySuggestions.slice(0, 5)) template.push({ label: suggestion, click: () => window?.webContents.replaceMisspelling(suggestion) });
+      if (params.misspelledWord) template.push({ label: 'Add to dictionary', click: () => window?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord) }, { type: 'separator' });
+      template.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' });
+      Menu.buildFromTemplate(template).popup({ window });
+    });
     window.on('close', event => {
       if (closing) return;
       event.preventDefault(); clearTimeout(closeTimer);
@@ -195,6 +211,11 @@ app.whenReady().then(async () => {
     ...(isMac ? [{ role: 'appMenu' }] : []),
     { label: 'File', submenu: [
       { label: 'New note', accelerator: 'CmdOrCtrl+N', click: command('new-note') },
+      { label: 'New tab', accelerator: 'CmdOrCtrl+T', click: command('new-tab') },
+      { label: 'Close tab', accelerator: 'CmdOrCtrl+W', click: command('close-tab') },
+      { label: 'Next tab', accelerator: 'Control+Tab', click: command('next-tab') },
+      { label: 'Previous tab', accelerator: 'Control+Shift+Tab', click: command('previous-tab') },
+      { label: "Open today's daily note", accelerator: 'CmdOrCtrl+D', click: command('daily-note') },
       { label: 'New folder', click: command('new-folder') },
       { label: 'Quick switcher', accelerator: 'CmdOrCtrl+O', click: command('quick-switcher') },
       { type: 'separator' },
@@ -203,7 +224,7 @@ app.whenReady().then(async () => {
       { label: 'Export to Word…', click: command('export-docx') },
       { label: 'Show in file manager', click: command('reveal') },
       { type: 'separator' },
-      { role: 'close' },
+      { label: 'Close window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },
     ] },
     { role: 'editMenu' },
     { label: 'View', submenu: [

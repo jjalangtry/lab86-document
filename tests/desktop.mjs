@@ -102,7 +102,7 @@ try {
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.cm-editor')).fontFamily)).toContain('Georgia');
 
   // The toolbar writes underline tags and aligned paragraphs. Live preview hides the tags.
-  const formatting = page.getByRole('toolbar', { name: 'Formatting', exact: true });
+  const formatting = page.getByRole('toolbar', { name: 'Selection formatting' });
   await body.locator('.cm-line').last().click();
   await page.keyboard.press('End');
   await page.keyboard.press('Shift+Home');
@@ -128,7 +128,7 @@ try {
   await expect(body.locator('.cm-highlight')).toHaveText('Heading one');
   await expect(body).not.toContainText('==');
   await selectWords('Heading one'.length, 2);
-  await page.getByRole('toolbar', { name: 'Selection formatting' }).getByRole('button', { name: 'Highlight', exact: true }).click();
+  await formatting.getByRole('button', { name: /^Highlight/ }).click();
   await expect.poll(() => read('First note.md')).toContain('# Heading one');
   await expect(page.getByRole('toolbar', { name: 'Selection formatting' })).toBeVisible();
   await page.keyboard.press('ArrowRight');
@@ -157,6 +157,37 @@ try {
   await expect.poll(() => fs.readdir(vault)).toContain('Renamed note.md');
   await expect.poll(() => read('First note.md')).toContain('[[Renamed note]]');
   await expect(page.getByRole('treeitem', { name: 'Renamed note' })).toBeVisible();
+
+  // Hovering a wikilink shows a preview card of the linked note.
+  await page.getByRole('treeitem', { name: 'First note' }).click();
+  await page.locator('.cm-wikilink').hover();
+  await expect(page.locator('.cm-hover-preview-title')).toHaveText('Renamed note', { timeout: 5000 });
+  await page.mouse.move(5, 300);
+
+  // Tabs: Ctrl+T opens an empty tab, Ctrl+click opens a note in a new tab, Ctrl+W closes.
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  await page.keyboard.press('Control+t');
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.getByText('No note is open')).toBeVisible();
+  await page.getByRole('treeitem', { name: 'Renamed note' }).click({ modifiers: ['Control'] });
+  await expect(page.getByRole('tab')).toHaveCount(3);
+  await expect(page.getByRole('tab', { selected: true })).toHaveText(/Renamed note/);
+  await page.getByRole('tab', { name: /First note/ }).click();
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('First note');
+  await page.keyboard.press('Control+w');
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await page.getByRole('tab', { name: /New tab/ }).getByRole('button', { name: /Close/ }).click();
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Renamed note');
+
+  // The tags pane lists tags. The daily note command makes today's note.
+  await page.getByRole('button', { name: 'Tags', exact: true }).click();
+  await expect(page.locator('.tag-item')).toHaveText(/#topic/);
+  await page.keyboard.press('Control+d');
+  const todayName = new Date().toISOString().slice(0, 10);
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue(todayName);
+  await expect.poll(() => fs.readdir(path.join(vault, 'Daily'))).toContain(`${todayName}.md`);
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
 
   // Search finds text across notes and opens the match.
   await page.keyboard.press('Control+Shift+F');
@@ -200,8 +231,15 @@ try {
 
   // External changes on disk appear in the editor. The app's own save must finish first.
   await expect.poll(() => read('Ideas/Third.md')).toContain('> quoted');
-  await fs.writeFile(path.join(vault, 'Ideas', 'Third.md'), 'Changed outside the app.\n');
+  await fs.writeFile(path.join(vault, 'Ideas', 'Third.md'), 'Changed outside the app.\n\n> [!tip] Remember\n> Water twice.\n');
   await expect(page.locator('.cm-content')).toContainText('Changed outside the app.', { timeout: 10000 });
+
+  // Callouts render in the live preview and the reading view.
+  await page.locator('.cm-content .cm-line').first().click();
+  await expect(page.locator('.cm-line.cm-callout-title')).toHaveText('Remember');
+  await page.getByTestId('mode-toggle').click();
+  await expect(page.locator('.callout.callout-tip .callout-title')).toHaveText('Remember');
+  await page.getByTestId('mode-toggle').click();
 
   // PDF export.
   await page.keyboard.press('Control+o');
@@ -250,7 +288,7 @@ try {
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('First note');
   await expect(page.locator('.cm-content')).toContainText('Last words.');
   expect(errors).toEqual([]);
-  console.log('PASS: vault, live preview, tasks, wikilinks, backlinks, outline, history, reading view, format, toolbar, highlight, selection toolbar, rename, search, quick switcher, command palette, watcher, PDF and Word export, close and reopen.');
+  console.log('PASS: vault, live preview, tasks, wikilinks, backlinks, outline, history, reading view, format, selection toolbar, highlight, hover preview, tabs, tags, daily note, callouts, rename, search, quick switcher, command palette, watcher, PDF and Word export, close and reopen.');
 } catch (error) {
   try { const page = await app?.firstWindow(); await page?.screenshot({ path: path.join(output, 'failure.png') }); console.error(await page?.locator('body').innerText()); } catch { /* the app may have exited */ }
   throw error;

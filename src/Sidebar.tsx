@@ -6,6 +6,8 @@ import { ContextItem, ContextMenu, ContextSeparator, IconButton } from './ui';
 
 export type TreeActions = {
   open: (path: string) => void;
+  openInTab: (path: string) => void;
+  move: (path: string, folder: string) => void;
   createNote: (folder: string) => void;
   createFolder: (folder: string) => void;
   rename: (path: string, name: string) => void;
@@ -25,6 +27,12 @@ function RenameInput({ initial, onCommit, onCancel }: { initial: string; onCommi
 function TreeRow({ entry, depth, openPath, expanded, toggle, actions, renaming, setRenaming }: { entry: Entry; depth: number; openPath: string | null; expanded: Set<string>; toggle: (path: string) => void; actions: TreeActions; renaming: string | null; setRenaming: (path: string | null) => void }) {
   const isFolder = entry.kind === 'folder';
   const isOpen = expanded.has(entry.path);
+  const [dropping, setDropping] = useState(false);
+  const dropProps = isFolder ? {
+    onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes('text/x-vault-path')) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDropping(true); } },
+    onDragLeave: () => setDropping(false),
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDropping(false); const source = e.dataTransfer.getData('text/x-vault-path'); if (source && source !== entry.path && !entry.path.startsWith(`${source}/`)) actions.move(source, entry.path); },
+  } : {};
   const selected = entry.path === openPath;
   const label = isFolder ? entry.name : entry.kind === 'note' ? noteName(entry.path) : entry.name;
   const commit = (value: string) => {
@@ -42,6 +50,7 @@ function TreeRow({ entry, depth, openPath, expanded, toggle, actions, renaming, 
     <ContextItem danger onSelect={() => actions.trash(entry.path)}>Delete</ContextItem>
   </> : <>
     {entry.kind === 'note' && <ContextItem onSelect={() => actions.open(entry.path)}>Open</ContextItem>}
+    {entry.kind === 'note' && <ContextItem onSelect={() => actions.openInTab(entry.path)}>Open in new tab</ContextItem>}
     <ContextItem onSelect={() => setRenaming(entry.path)}>Rename</ContextItem>
     <ContextItem onSelect={() => actions.reveal(entry.path)}>Show in file manager</ContextItem>
     <ContextSeparator />
@@ -50,9 +59,13 @@ function TreeRow({ entry, depth, openPath, expanded, toggle, actions, renaming, 
   return <>
     <ContextMenu items={items}>
       <div role="treeitem" aria-expanded={isFolder ? isOpen : undefined} aria-selected={selected} tabIndex={-1}
-        className={`tree-row ${isFolder ? 'is-folder' : 'is-file'} ${selected ? 'is-selected' : ''} ${entry.kind === 'file' ? 'is-attachment' : ''}`}
+        className={`tree-row ${isFolder ? 'is-folder' : 'is-file'} ${selected ? 'is-selected' : ''} ${entry.kind === 'file' ? 'is-attachment' : ''} ${dropping ? 'is-dropping' : ''}`}
         style={{ paddingLeft: 8 + depth * 14 }}
-        onClick={() => { if (isFolder) toggle(entry.path); else if (entry.kind === 'note') actions.open(entry.path); }}
+        draggable={renaming !== entry.path}
+        onDragStart={e => { e.dataTransfer.setData('text/x-vault-path', entry.path); e.dataTransfer.setData('text/plain', entry.path); e.dataTransfer.effectAllowed = 'move'; }}
+        {...dropProps}
+        onAuxClick={e => { if (e.button === 1 && entry.kind === 'note') { e.preventDefault(); actions.openInTab(entry.path); } }}
+        onClick={e => { if (isFolder) toggle(entry.path); else if (entry.kind === 'note') { if (e.ctrlKey || e.metaKey) actions.openInTab(entry.path); else actions.open(entry.path); } }}
         onKeyDown={e => { if (e.key === 'Enter') { if (isFolder) toggle(entry.path); else if (entry.kind === 'note') actions.open(entry.path); } if (e.key === 'F2') setRenaming(entry.path); }}>
         {isFolder ? <span className="tree-chevron">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span> : <span className="tree-chevron" />}
         {renaming === entry.path ? <RenameInput initial={label} onCommit={commit} onCancel={() => setRenaming(null)} /> : <span className="tree-label" title={entry.path}>{label}</span>}
@@ -79,7 +92,9 @@ export function FileTree({ vaultName, tree, openPath, expanded, toggle, collapse
       </div>
     </div>
     <ContextMenu items={rootItems}>
-      <div className="tree" role="tree" aria-label="Files">
+      <div className="tree" role="tree" aria-label="Files"
+        onDragOver={e => { if (e.dataTransfer.types.includes('text/x-vault-path')) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+        onDrop={e => { e.preventDefault(); const source = e.dataTransfer.getData('text/x-vault-path'); if (source) actions.move(source, ''); }}>
         {tree.map(entry => <TreeRow key={entry.path} entry={entry} depth={0} openPath={openPath} expanded={expanded} toggle={toggle} actions={actions} renaming={renaming} setRenaming={setRenaming} />)}
         {tree.length === 0 && <p className="pane-empty">No notes yet. Press <kbd>{window.vault.platform === 'darwin' ? '⌘' : 'Ctrl'} N</kbd> to make one.</p>}
       </div>
@@ -104,6 +119,16 @@ export function SearchPane({ query, setQuery, hits, onOpen, inputRef }: { query:
         <button type="button" className="search-hit-title" onClick={() => onOpen(hit.path)} title={hit.path}>{noteName(hit.path)}<span className="search-count">{hit.total}</span></button>
         {hit.matches.map(match => <button type="button" key={`${hit.path}:${match.line}`} className="search-match" onClick={() => onOpen(hit.path, match.line, match.from, match.length)}><Highlighted text={match.text} from={match.from} length={match.length} /></button>)}
       </div>)}
+    </div>
+  </div>;
+}
+
+export function TagsPane({ tags, onSelect }: { tags: { tag: string; count: number }[]; onSelect: (tag: string) => void }) {
+  return <div className="pane">
+    <div className="pane-header"><span className="pane-title">Tags</span><span className="pane-count">{tags.length}</span></div>
+    <div className="pane-scroll">
+      {tags.length === 0 && <p className="pane-empty">No tags yet. Type #tag in a note.</p>}
+      {tags.map(({ tag, count }) => <button type="button" key={tag} className="tag-item" onClick={() => onSelect(tag)}><span className="tag-name">#{tag}</span><span className="search-count">{count}</span></button>)}
     </div>
   </div>;
 }

@@ -11,6 +11,7 @@ declare global {
       platform: string;
       info(): Promise<VaultInfo>;
       setTheme(theme: Theme): Promise<void>;
+      setChrome(theme: 'light' | 'dark'): Promise<void>;
       chooseVault(create: boolean): Promise<VaultInfo | null>;
       openVault(directory: string): Promise<VaultInfo>;
       forgetVault(directory: string): Promise<VaultInfo>;
