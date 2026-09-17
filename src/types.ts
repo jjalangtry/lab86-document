@@ -12,6 +12,10 @@ declare global {
       info(): Promise<VaultInfo>;
       setTheme(theme: Theme): Promise<void>;
       setChrome(theme: 'light' | 'dark'): Promise<void>;
+      log(level: 'error' | 'warn' | 'info', message: string): Promise<void>;
+      openLogs(): Promise<void>;
+      readState(name: string): Promise<unknown>;
+      writeState(name: string, value: unknown): Promise<void>;
       chooseVault(create: boolean): Promise<VaultInfo | null>;
       openVault(directory: string): Promise<VaultInfo>;
       forgetVault(directory: string): Promise<VaultInfo>;

@@ -2,7 +2,6 @@ import { build } from 'vite';
 import { _electron as electron, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 
 const fixture = await fs.mkdtemp(path.join(process.cwd(), '.tab-fixture-'));
 let app;
@@ -19,7 +18,7 @@ try {
           import { createEditor } from ${JSON.stringify(path.join(process.cwd(), 'src/editor.ts'))};
           window.note = createEditor(document.querySelector('#editor'), () => ({
             resolve: () => null, noteNames: () => [], openLink() {}, openExternal() {}, openTag() {},
-            saveImage: async () => null, onChange(text) { window.savedText = text; }
+            saveImage: async () => null, onChange(text) { window.savedText = text; }, openFormat() {}, mountToolbar() { return () => {}; }, preview: () => null
           }), 'live');
         `;
       },
@@ -45,17 +44,17 @@ try {
       window.note.setMode(mode);
       window.note.view.focus();
     }, mode);
-    await page.keyboard.press('Control+Home');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home');
     await page.keyboard.press('Tab');
     expect(await page.evaluate(() => window.note.text())).toBe('\tFirst\nSecond');
     expect(await page.evaluate(() => window.savedText)).toBe('\tFirst\nSecond');
     await expect(content).toBeFocused();
     await page.keyboard.press('Shift+Tab');
     expect(await page.evaluate(() => window.note.text())).toBe('First\nSecond');
-    await page.keyboard.press('Control+a');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
     await page.keyboard.press('Tab');
     expect(await page.evaluate(() => window.note.text())).toBe('\tFirst\n\tSecond');
-    await page.keyboard.press('Control+z');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
     expect(await page.evaluate(() => window.note.text())).toBe('First\nSecond');
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Escape');
@@ -66,5 +65,5 @@ try {
   console.log('Passed Tab, Shift+Tab, selection, undo, change notification, and focus checks in live and source modes.');
 } finally {
   if (app) await app.close();
-  execFileSync('gio', ['trash', fixture]);
+  await fs.rm(fixture, { recursive: true, force: true });
 }

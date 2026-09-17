@@ -3,9 +3,9 @@ import { DEFAULT_SETTINGS, type Settings } from './settings';
 import type { Mode, Theme } from './types';
 import { Dialog } from './ui';
 
-type Props = { open: boolean; onOpenChange: (open: boolean) => void; settings: Settings; onChange: (patch: Partial<Settings>) => void; theme: Theme; onTheme: (theme: Theme) => void; mode: Mode; onMode: (mode: Mode) => void; version: string };
+type Props = { open: boolean; onOpenChange: (open: boolean) => void; settings: Settings; onChange: (patch: Partial<Settings>) => void; theme: Theme; onTheme: (theme: Theme) => void; mode: Mode; onMode: (mode: Mode) => void; version: string; onShowLogs: () => void };
 
-export function SettingsDialog({ open, onOpenChange, settings, onChange, theme, onTheme, mode, onMode, version }: Props) {
+export function SettingsDialog({ open, onOpenChange, settings, onChange, theme, onTheme, mode, onMode, version, onShowLogs }: Props) {
   const folder = (key: 'dailyFolder' | 'templatesFolder' | 'attachmentsFolder', label: string, hint: string) => <label className="settings-row"><span><strong>{label}</strong><small>{hint}</small></span><input type="text" aria-label={label} defaultValue={settings[key]} onBlur={e => onChange({ [key]: e.target.value.trim() || DEFAULT_SETTINGS[key] })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }} /></label>;
   return <Dialog open={open} onOpenChange={onOpenChange} title="Settings" className="settings-dialog">
     <div className="settings-body">
@@ -26,7 +26,8 @@ export function SettingsDialog({ open, onOpenChange, settings, onChange, theme, 
       {folder('attachmentsFolder', 'Attachments folder', 'Pasted and inserted images go here.')}
       {folder('dailyFolder', 'Daily notes folder', 'Daily notes are named by date.')}
       {folder('templatesFolder', 'Templates folder', 'Notes in this folder are templates.')}
-      <p className="settings-version">Document {version}</p>
+      <h3>About</h3>
+      <div className="settings-row"><span><strong>Document {version}</strong><small>Errors and freezes are written to a log file.</small></span><button type="button" className="settings-button" onClick={onShowLogs}>Show logs folder</button></div>
     </div>
   </Dialog>;
 }

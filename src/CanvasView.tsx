@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Maximize, Plus, Trash2 } from 'lucide-react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FileText, LayoutGrid, Maximize, PenTool, Plus, Trash2 } from 'lucide-react';
 import { noteName, renderMarkdown, type Resolver } from './markdown';
 import { stripFrontmatter } from './frontmatter';
 import type { Note } from './types';
 import { IconButton, Tooltip } from './ui';
 
 import { parseCanvas, serializeCanvas, type CanvasData, type CanvasNode, type Side } from './canvas';
+import type { TLEditorSnapshot } from 'tldraw';
+// tldraw is large. It loads the first time a canvas switches to Draw mode.
+const TldrawBoard = lazy(() => import('./TldrawBoard'));
 const COLORS: [string, string][] = [['', 'None'], ['1', 'Red'], ['2', 'Orange'], ['3', 'Yellow'], ['4', 'Green'], ['5', 'Cyan'], ['6', 'Purple']];
 const GRID = 10;
 const uid = () => Math.random().toString(16).slice(2, 18);
@@ -26,11 +29,15 @@ function edgePath(from: { x: number; y: number }, fromSide: Side, to: { x: numbe
   return `M ${from.x} ${from.y} C ${from.x + ax} ${from.y + ay}, ${to.x + bx} ${to.y + by}, ${to.x} ${to.y}`;
 }
 
-type Props = { path: string; text: string; onChange: (text: string) => void; resolve: Resolver; notes: Note[]; onOpenNote: (path: string) => void; pickNote: () => Promise<string | null> };
+export type CanvasViewState = { x: number; y: number; zoom: number };
+type Props = { path: string; text: string; onChange: (text: string) => void; resolve: Resolver; notes: Note[]; onOpenNote: (path: string) => void; pickNote: () => Promise<string | null>; theme: 'light' | 'dark'; initialView?: CanvasViewState; onViewChange: (view: CanvasViewState) => void };
 
-export function CanvasView({ path, text, onChange, resolve, notes, onOpenNote, pickNote }: Props) {
+export function CanvasView({ path, text, onChange, resolve, notes, onOpenNote, pickNote, theme, initialView, onViewChange }: Props) {
   const data = useMemo(() => parseCanvas(text), [text]);
-  const [view, setView] = useState(() => { try { return JSON.parse(localStorage.getItem(`document.canvas:${path}`) || '') as { x: number; y: number; zoom: number }; } catch { return { x: 80, y: 60, zoom: 1 }; } });
+  const [view, setView] = useState<CanvasViewState>(() => initialView ?? { x: 80, y: 60, zoom: 1 });
+  // Cards is the JSON Canvas board. Draw is a tldraw layer stored in the same file.
+  const [mode, setMode] = useState<'cards' | 'draw'>(() => (parseCanvas(text).tldraw && !parseCanvas(text).nodes.length ? 'draw' : 'cards'));
+  const drawing = useRef<TLEditorSnapshot | null>((data.tldraw as TLEditorSnapshot | undefined) ?? null);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<{ from: string; side: Side; x: number; y: number } | null>(null);
@@ -39,9 +46,11 @@ export function CanvasView({ path, text, onChange, resolve, notes, onOpenNote, p
   const drag = useRef<{ kind: 'pan' | 'move' | 'resize'; id?: string; startX: number; startY: number; origin: { x: number; y: number; width?: number; height?: number }; moved: boolean } | null>(null);
   const viewRef = useRef(view); viewRef.current = view;
   const dataRef = useRef(data); dataRef.current = data;
-  useEffect(() => { localStorage.setItem(`document.canvas:${path}`, JSON.stringify(view)); }, [view, path]);
+  const viewChange = useRef(onViewChange); viewChange.current = onViewChange;
+  useEffect(() => { viewChange.current(view); }, [view]);
 
-  const commit = useCallback((next: CanvasData) => onChange(serializeCanvas(next)), [onChange]);
+  const commit = useCallback((next: CanvasData) => onChange(serializeCanvas(drawing.current ? { ...next, tldraw: drawing.current } : next)), [onChange]);
+  const commitDrawing = useCallback((snapshot: TLEditorSnapshot) => { drawing.current = snapshot; onChange(serializeCanvas({ ...dataRef.current, tldraw: snapshot })); }, [onChange]);
   const updateNode = useCallback((id: string, patch: Partial<CanvasNode>) => commit({ ...dataRef.current, nodes: dataRef.current.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }), [commit]);
   const toBoard = (clientX: number, clientY: number) => {
     const rect = board.current?.getBoundingClientRect();
@@ -140,14 +149,20 @@ export function CanvasView({ path, text, onChange, resolve, notes, onOpenNote, p
   };
   return <div className="canvas-view" data-testid="canvas-view">
     <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
-      <IconButton label="Add card" onClick={() => { const rect = board.current?.getBoundingClientRect(); const c = toBoard((rect?.left ?? 0) + (rect?.width ?? 600) / 2, (rect?.top ?? 0) + (rect?.height ?? 400) / 2); addText(c.x - 130, c.y - 60); }}><Plus size={16} /></IconButton>
-      <IconButton label="Add note from vault" onClick={() => void addNote()}><FileText size={16} /></IconButton>
-      <IconButton label="Zoom to fit" onClick={fit}><Maximize size={16} /></IconButton>
-      {selectedNode && <div className="canvas-colors" role="group" aria-label="Card color">{COLORS.map(([value, label]) => <Tooltip key={value || 'none'} label={label}><button type="button" className={`canvas-swatch color-${value || 'none'} ${(selectedNode.color || '') === value ? 'is-active' : ''}`} aria-label={`${label} color`} onClick={() => updateNode(selectedNode.id, { color: value || undefined })} /></Tooltip>)}</div>}
-      {selected && <IconButton label="Delete selection" onClick={remove}><Trash2 size={16} /></IconButton>}
-      <span className="canvas-hint">Double-click the board to add a card. Drag a side handle to connect cards. Ctrl+wheel zooms.</span>
+      <div className="canvas-modes" role="group" aria-label="Canvas mode">
+        <button type="button" className={mode === 'cards' ? 'is-active' : ''} aria-pressed={mode === 'cards'} onClick={() => setMode('cards')}><LayoutGrid size={14} />Cards</button>
+        <button type="button" className={mode === 'draw' ? 'is-active' : ''} aria-pressed={mode === 'draw'} onClick={() => setMode('draw')}><PenTool size={14} />Draw</button>
+      </div>
+      {mode === 'draw' && <span className="canvas-hint">Freehand drawing with tldraw. The drawing is saved in this canvas file.</span>}
+      {mode === 'cards' && <IconButton label="Add card" onClick={() => { const rect = board.current?.getBoundingClientRect(); const c = toBoard((rect?.left ?? 0) + (rect?.width ?? 600) / 2, (rect?.top ?? 0) + (rect?.height ?? 400) / 2); addText(c.x - 130, c.y - 60); }}><Plus size={16} /></IconButton>}
+      {mode === 'cards' && <IconButton label="Add note from vault" onClick={() => void addNote()}><FileText size={16} /></IconButton>}
+      {mode === 'cards' && <IconButton label="Zoom to fit" onClick={fit}><Maximize size={16} /></IconButton>}
+      {mode === 'cards' && selectedNode && <div className="canvas-colors" role="group" aria-label="Card color">{COLORS.map(([value, label]) => <Tooltip key={value || 'none'} label={label}><button type="button" className={`canvas-swatch color-${value || 'none'} ${(selectedNode.color || '') === value ? 'is-active' : ''}`} aria-label={`${label} color`} onClick={() => updateNode(selectedNode.id, { color: value || undefined })} /></Tooltip>)}</div>}
+      {mode === 'cards' && selected && <IconButton label="Delete selection" onClick={remove}><Trash2 size={16} /></IconButton>}
+      {mode === 'cards' && <span className="canvas-hint">Double-click the board to add a card. Drag a side handle to connect cards. Ctrl+wheel zooms.</span>}
     </div>
-    <div ref={board} className="canvas-board" onWheel={onWheel}
+    {mode === 'draw' ? <Suspense fallback={<div className="canvas-loading">Loading the drawing tools…</div>}><TldrawBoard key={path} snapshot={drawing.current} onChange={commitDrawing} theme={theme} /></Suspense>
+    : <div ref={board} className="canvas-board" onWheel={onWheel}
       onMouseDown={e => { if (e.button !== 0 || e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('canvas-layer')) return; setSelected(null); setEditing(null); drag.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, origin: { x: view.x, y: view.y }, moved: false }; }}
       onDoubleClick={e => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('canvas-layer')) { const p = toBoard(e.clientX, e.clientY); addText(p.x - 130, p.y - 60); } }}>
       <div className="canvas-layer" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
@@ -189,6 +204,6 @@ export function CanvasView({ path, text, onChange, resolve, notes, onOpenNote, p
         })}
       </div>
       {data.nodes.length === 0 && <p className="canvas-empty">Double-click anywhere to add a card.</p>}
-    </div>
+    </div>}
   </div>;
 }

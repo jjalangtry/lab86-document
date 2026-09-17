@@ -213,6 +213,14 @@ export function backlinks(target: string, notes: Note[], resolve: Resolver): Bac
 }
 
 export type SearchHit = { path: string; matches: { line: number; text: string; from: number; length: number }[]; total: number };
+// Lowercased lines are cached per note object, so typing in the search box does not
+// re-lowercase the whole vault on every keystroke.
+const lowered = new WeakMap<Note, { lower: string; lines: string[] }>();
+function loweredNote(note: Note) {
+  let entry = lowered.get(note);
+  if (!entry) { entry = { lower: note.text.toLowerCase(), lines: note.text.split('\n') }; lowered.set(note, entry); }
+  return entry;
+}
 export function searchNotes(query: string, notes: Note[]): SearchHit[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
@@ -221,7 +229,9 @@ export function searchNotes(query: string, notes: Note[]): SearchHit[] {
     const matches: SearchHit['matches'] = [];
     let total = 0;
     if (noteStem(note.path).toLowerCase().includes(needle)) total++;
-    note.text.split('\n').forEach((text, line) => {
+    const entry = loweredNote(note);
+    if (!entry.lower.includes(needle)) { if (total) hits.push({ path: note.path, matches, total }); continue; }
+    entry.lines.forEach((text, line) => {
       const index = text.toLowerCase().indexOf(needle);
       if (index < 0) return;
       total++;

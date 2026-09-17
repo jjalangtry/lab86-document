@@ -146,6 +146,23 @@ class Vault {
     return this.relative(target);
   }
 
+  // App state for this vault lives in <vault>/.document/<name>.json. Hidden folders stay out of the tree.
+  stateFile(name) {
+    if (typeof name !== 'string' || !/^[a-z][a-z-]{0,40}$/.test(name)) throw Error('Invalid state name.');
+    return this.resolve(`.document/${name}.json`);
+  }
+  async readState(name) {
+    try { return JSON.parse(await fs.readFile(this.stateFile(name), 'utf8')); } catch { return null; }
+  }
+  async writeState(name, value) {
+    const file = this.stateFile(name);
+    const text = JSON.stringify(value, null, 2);
+    if (text.length > 5_000_000) throw Error('The state is too large.');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const temp = `${file}.${randomUUID()}.tmp`;
+    try { await fs.writeFile(temp, text, 'utf8'); await fs.rename(temp, file); } finally { await fs.rm(temp, { force: true }); }
+  }
+
   async saveAttachment(name, data, folder = 'attachments') {
     const buffer = Buffer.from(data);
     if (!buffer.length || buffer.length > MAX_ATTACHMENT_BYTES) throw Error('The image is too large.');

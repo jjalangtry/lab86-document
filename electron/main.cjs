@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, protocol, session } = require('electron');
+const { app, BrowserWindow, crashReporter, ipcMain, dialog, Menu, shell, nativeTheme, net, protocol, session } = require('electron');
+const { appendFileSync, mkdirSync } = require('node:fs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -10,15 +11,36 @@ const { TreeWatcher } = require('./watcher.cjs');
 
 if (process.env.LABDOC_TEST_DATA) app.setPath('userData', process.env.LABDOC_TEST_DATA);
 app.setName('Document');
-protocol.registerSchemesAsPrivileged([{ scheme: 'vault', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
+// The app is served over app:// instead of file://. A standard scheme gives the renderer a
+// real origin, so fetch() works for bundled assets and the content security policy applies.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+  { scheme: 'vault', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
 
-const entry = pathToFileURL(path.join(__dirname, '../dist/index.html')).href;
+const distDirectory = path.join(__dirname, '../dist');
+const entry = 'app://document/index.html';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
 const CHROME = { dark: { color: '#262626', symbolColor: '#dadada' }, light: { color: '#f4f4f4', symbolColor: '#222222' } };
 let window = null, vault = null, watcher = null, config = { vault: null, recent: [], theme: 'system' };
 let closing = false, quitting = false, closeTimer = null, closeDialogOpen = false;
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
+const logsDirectory = () => path.join(app.getPath('userData'), 'logs');
+
+// Errors and freezes go to logs/document.log. Native crashes go to minidumps next to it.
+function log(level, message) {
+  try {
+    mkdirSync(logsDirectory(), { recursive: true });
+    const file = path.join(logsDirectory(), 'document.log');
+    appendFileSync(file, `${new Date().toISOString()} [${level}] ${String(message).slice(0, 4000)}\n`);
+  } catch { /* logging must never throw */ }
+}
+process.on('uncaughtException', error => { log('error', `main uncaught: ${error?.stack || error}`); });
+process.on('unhandledRejection', reason => { log('error', `main rejection: ${reason?.stack || reason}`); });
+app.on('render-process-gone', (_event, contents, details) => log('error', `renderer gone: ${details.reason} (exit ${details.exitCode})`));
+app.on('child-process-gone', (_event, details) => log('error', `child process gone: ${details.type} ${details.reason}`));
+try { crashReporter.start({ uploadToServer: false, submitURL: '', compress: false }); } catch { /* unavailable */ }
 
 async function loadConfig() {
   try {
@@ -97,7 +119,16 @@ app.whenReady().then(async () => {
 
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   if (!isMac) { try { session.defaultSession.setSpellCheckerLanguages(['en-US']); } catch { /* unavailable */ } }
-  session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !/^(file:|data:|devtools:|vault:)/.test(details.url) }));
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !/^(app:|file:|data:|blob:|devtools:|vault:)/.test(details.url) }));
+  protocol.handle('app', request => {
+    try {
+      const url = new URL(request.url);
+      const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+      const full = path.resolve(distDirectory, relative);
+      if (full !== distDirectory && !full.startsWith(distDirectory + path.sep)) return new Response('', { status: 403 });
+      return net.fetch(pathToFileURL(full).href);
+    } catch { return new Response('', { status: 404 }); }
+  });
   protocol.handle('vault', request => {
     try {
       const url = new URL(request.url);
@@ -108,6 +139,10 @@ app.whenReady().then(async () => {
   });
 
   handle('app:info', () => vaultInfo());
+  handle('app:log', (level, message) => log(['error', 'warn', 'info'].includes(level) ? level : 'info', `renderer: ${message}`));
+  handle('app:logs', async () => { await fs.mkdir(logsDirectory(), { recursive: true }); const error = await shell.openPath(logsDirectory()); if (error) throw Error(error); });
+  handle('state:read', name => requireVault().readState(name));
+  handle('state:write', (name, value) => requireVault().writeState(name, value));
   // The renderer reports the effective theme so the native caption buttons match it.
   handle('app:chrome', theme => { if (isWindows && window && !window.isDestroyed()) { try { window.setTitleBarOverlay(CHROME[theme === 'light' ? 'light' : 'dark']); } catch { /* not supported */ } } });
   handle('app:theme', async theme => { if (!['system', 'light', 'dark'].includes(theme)) throw Error('Unknown theme.'); config.theme = theme; nativeTheme.themeSource = theme; await saveConfig(); });
@@ -205,6 +240,19 @@ app.whenReady().then(async () => {
     });
     window.on('closed', () => { window = null; });
     window.webContents.on('render-process-gone', () => void failedClose());
+    // A frozen renderer gets a dialog after a few seconds instead of a silent hang.
+    let unresponsiveDialog = false;
+    window.on('unresponsive', async () => {
+      log('error', 'renderer unresponsive');
+      if (unresponsiveDialog || !window || window.isDestroyed()) return;
+      unresponsiveDialog = true;
+      try {
+        const { response } = await dialog.showMessageBox(window, { type: 'warning', title: 'Document is not responding', message: 'The window stopped responding.', detail: 'Wait for it to recover, or reload the window. Unsaved changes from the last second could be lost on reload.', buttons: ['Wait', 'Reload'], defaultId: 0, cancelId: 0 });
+        if (response === 1 && window && !window.isDestroyed()) { log('info', 'renderer reloaded by user'); window.webContents.forcefullyCrashRenderer(); window.webContents.reload(); }
+      } finally { unresponsiveDialog = false; }
+    });
+    window.on('responsive', () => log('info', 'renderer responsive again'));
+    window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) log('error', `console: ${message}`); });
     window.loadURL(entry);
   }
   const command = name => () => window?.webContents.send('app:command', name);
@@ -224,6 +272,7 @@ app.whenReady().then(async () => {
       { label: 'Export to PDF…', accelerator: 'CmdOrCtrl+Shift+E', click: command('export-pdf') },
       { label: 'Export to Word…', click: command('export-docx') },
       { label: 'Show in file manager', click: command('reveal') },
+      { label: 'Show logs folder', click: command('logs') },
       { type: 'separator' },
       { label: 'Close window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },
     ] },

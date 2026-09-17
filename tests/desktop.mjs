@@ -15,6 +15,10 @@ let app;
 const errors = [];
 const launch = () => electron.launch({ args: [process.env.LABDOC_TEST_APP || '.', '--no-sandbox', '--disable-gpu'], env: { ...process.env, LABDOC_TEST_DATA: data }, timeout: 30000 });
 const read = name => fs.readFile(path.join(vault, name), 'utf8');
+// App hotkeys use Cmd on macOS. Document start and end also differ there.
+const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+const docStart = process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home';
+const docEnd = process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End';
 const todayName = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
 try {
   app = await launch();
@@ -111,7 +115,7 @@ try {
   await expect.poll(() => read('First note.md')).toContain('<u>Plain line</u>');
   await formatting.getByRole('button', { name: /^Align center/ }).click();
   await expect.poll(() => read('First note.md')).toContain('<p align="center"><u>Plain line</u></p>');
-  await page.keyboard.press('Control+Home');
+  await page.keyboard.press(docStart);
   await expect(body.locator('.cm-line.cm-align-center')).toHaveCount(1);
 
   // Highlight from the toolbar renders in the live preview. The selection toolbar floats above selected text.
@@ -136,7 +140,7 @@ try {
   await expect(page.getByRole('toolbar', { name: 'Selection formatting' })).toBeHidden();
 
   // Indented text stays a paragraph in both views.
-  await page.keyboard.press('Control+End');
+  await page.keyboard.press(docEnd);
   await page.keyboard.press('Enter');
   await page.keyboard.type('\tIndented sentence.');
   await expect(body.locator('.cm-line.cm-codeblock')).toHaveCount(0);
@@ -167,7 +171,7 @@ try {
 
   // Tabs: Ctrl+T opens an empty tab, Ctrl+click opens a note in a new tab, Ctrl+W closes.
   await expect(page.getByRole('tab')).toHaveCount(1);
-  await page.keyboard.press('Control+t');
+  await page.keyboard.press(`${mod}+t`);
   await expect(page.getByRole('tab')).toHaveCount(2);
   await expect(page.getByText('No note is open')).toBeVisible();
   await page.getByRole('treeitem', { name: 'Renamed note' }).click({ modifiers: ['Control'] });
@@ -175,7 +179,7 @@ try {
   await expect(page.getByRole('tab', { selected: true })).toHaveText(/Renamed note/);
   await page.getByRole('tab', { name: /First note/ }).click();
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('First note');
-  await page.keyboard.press('Control+w');
+  await page.keyboard.press(`${mod}+w`);
   await expect(page.getByRole('tab')).toHaveCount(2);
   await page.getByRole('tab', { name: /New tab/ }).getByRole('button', { name: /Close/ }).click();
   await expect(page.getByRole('tab')).toHaveCount(1);
@@ -197,10 +201,10 @@ try {
   // Templates insert with filled tokens. Settings open with Ctrl+,.
   await fs.mkdir(path.join(vault, 'Templates'), { recursive: true });
   await fs.writeFile(path.join(vault, 'Templates', 'Meeting.md'), '## Meeting {{date}}\n- Attendees:\n');
-  await expect.poll(async () => { await page.keyboard.press('Control+p'); await page.getByRole('combobox', { name: 'Select a command…' }).fill('insert template'); await page.keyboard.press('Enter'); const found = await page.getByRole('option', { name: /Meeting/ }).isVisible().catch(() => false); if (!found) await page.keyboard.press('Escape'); return found; }, { timeout: 10000 }).toBe(true);
+  await expect.poll(async () => { await page.keyboard.press(`${mod}+p`); await page.getByRole('combobox', { name: 'Select a command…' }).fill('insert template'); await page.keyboard.press('Enter'); const found = await page.getByRole('option', { name: /Meeting/ }).isVisible().catch(() => false); if (!found) await page.keyboard.press('Escape'); return found; }, { timeout: 10000 }).toBe(true);
   await page.getByRole('option', { name: /Meeting/ }).click();
   await expect.poll(() => read('First note.md')).toContain(`## Meeting ${todayName}`);
-  await page.keyboard.press('Control+,');
+  await page.keyboard.press(`${mod}+,`);
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
   await page.getByRole('checkbox', { name: 'Readable line length' }).uncheck();
   await page.keyboard.press('Escape');
@@ -211,7 +215,7 @@ try {
   await expect(page.getByRole('tab', { selected: true })).toHaveText(/Graph view/);
   await expect(page.getByTestId('graph-view')).toBeVisible();
   await expect(page.locator('.graph-count')).toContainText(/notes/);
-  await page.keyboard.press('Control+w');
+  await page.keyboard.press(`${mod}+w`);
   await page.getByRole('button', { name: 'Create new canvas', exact: true }).click();
   await expect(page.getByTestId('canvas-view')).toBeVisible();
   await page.getByRole('button', { name: 'Add card', exact: true }).click();
@@ -221,14 +225,33 @@ try {
   await expect.poll(() => read('Untitled.canvas')).toContain('"text": "A canvas card"');
   await page.getByRole('button', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('treeitem', { name: /Untitled/ })).toBeVisible();
-  await page.keyboard.press('Control+w');
-  await page.keyboard.press('Control+d');
+
+  // Draw mode loads tldraw. A stroke is saved into the same canvas file.
+  await page.getByRole('button', { name: 'Draw', exact: true }).click();
+  const board = page.getByTestId('tldraw-board');
+  await expect(board.locator('.tl-container')).toBeVisible({ timeout: 30000 });
+  await page.keyboard.press('d');
+  const box = await board.locator('.tl-canvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2 - 60, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 40, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => read('Untitled.canvas'), { timeout: 15000 }).toContain('"tldraw"');
+  await expect.poll(() => read('Untitled.canvas')).toContain('"nodes"');
+  await page.getByRole('button', { name: 'Cards', exact: true }).click();
+  await expect(page.locator('.canvas-node-body')).toContainText('A canvas card');
+
+  // Workspace state lives inside the vault, so it travels with the folder.
+  await expect.poll(() => read('.document/workspace.json'), { timeout: 10000 }).toContain('"tabs"');
+  expect(JSON.parse(await read('.document/workspace.json')).bookmarks).toContain('First note.md');
+  await page.keyboard.press(`${mod}+w`);
+  await page.keyboard.press(`${mod}+d`);
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue(todayName);
   await expect.poll(() => fs.readdir(path.join(vault, 'Daily'))).toContain(`${todayName}.md`);
   await page.getByRole('button', { name: 'Files', exact: true }).click();
 
   // Search finds text across notes and opens the match.
-  await page.keyboard.press('Control+Shift+F');
+  await page.keyboard.press(`${mod}+Shift+F`);
   const search = page.getByRole('textbox', { name: 'Search all notes' });
   await expect(search).toBeFocused();
   await search.fill('a task');
@@ -238,20 +261,20 @@ try {
   await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('a task');
 
   // Quick switcher opens by name and creates by name.
-  await page.keyboard.press('Control+o');
+  await page.keyboard.press(`${mod}+o`);
   const switcher = page.getByRole('combobox', { name: 'Find or create a note…' });
   await expect(switcher).toBeFocused();
   await switcher.fill('renamed');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Renamed note');
-  await page.keyboard.press('Control+o');
+  await page.keyboard.press(`${mod}+o`);
   await page.getByRole('combobox', { name: 'Find or create a note…' }).fill('Ideas/Third');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Third');
   await expect.poll(() => fs.readdir(path.join(vault, 'Ideas'))).toContain('Third.md');
 
   // Command palette runs a command.
-  await page.keyboard.press('Control+p');
+  await page.keyboard.press(`${mod}+p`);
   await page.getByRole('combobox', { name: 'Select a command…' }).fill('source mode');
   await page.keyboard.press('Enter');
   await page.locator('.cm-content').click();
@@ -260,7 +283,7 @@ try {
   await page.keyboard.press('Enter');
   await page.keyboard.type('```js\nconst a = 1;\n```\n---\n> quoted');
   await expect.poll(() => read('Ideas/Third.md')).toContain('```js\nconst a = 1;\n```');
-  await page.keyboard.press('Control+p');
+  await page.keyboard.press(`${mod}+p`);
   await page.getByRole('combobox', { name: 'Select a command…' }).fill('live preview');
   await page.keyboard.press('Enter');
   await expect(page.locator('.cm-line.cm-codeblock')).toHaveCount(3);
@@ -281,12 +304,12 @@ try {
   await page.getByTestId('mode-toggle').click();
 
   // PDF export.
-  await page.keyboard.press('Control+o');
+  await page.keyboard.press(`${mod}+o`);
   await page.getByRole('combobox', { name: 'Find or create a note…' }).fill('First');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('First note');
   await app.evaluate(({ dialog }, directory) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: `${directory}/export.pdf` }); }, data);
-  await page.keyboard.press('Control+Shift+E');
+  await page.keyboard.press(`${mod}+Shift+E`);
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Exported export.pdf' })).toBeVisible({ timeout: 20000 });
   const pdfTask = getDocument({ data: new Uint8Array(await fs.readFile(path.join(data, 'export.pdf'))), useSystemFonts: true });
@@ -299,7 +322,7 @@ try {
 
   // Word export.
   await app.evaluate(({ dialog }, directory) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: `${directory}/export.docx` }); }, data);
-  await page.keyboard.press('Control+p');
+  await page.keyboard.press(`${mod}+p`);
   await page.getByRole('combobox', { name: 'Select a command…' }).fill('export to word');
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Export', exact: true }).click();
@@ -312,9 +335,12 @@ try {
   expect(await word.file('word/footer1.xml').async('string')).toContain('PAGE');
   await fs.copyFile(path.join(data, 'export.docx'), path.join(output, 'export.docx'));
 
+  // The workspace file records the active tab before the window closes.
+  await expect.poll(async () => { const w = JSON.parse(await read('.document/workspace.json')); return w.tabs?.paths?.[w.tabs.active]; }, { timeout: 5000 }).toBe('First note.md');
+
   // Unsaved text is written before the window closes.
   await page.locator('.cm-content .cm-line').last().click();
-  await page.keyboard.press('Control+End');
+  await page.keyboard.press(docEnd);
   await page.keyboard.type(' Last words.');
   const exited = new Promise(resolve => app.process().once('exit', resolve));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
@@ -327,7 +353,7 @@ try {
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('First note');
   await expect(page.locator('.cm-content')).toContainText('Last words.');
   expect(errors).toEqual([]);
-  console.log('PASS: vault, live preview, tasks, wikilinks, backlinks, outline, history, reading view, format, selection toolbar, highlight, hover preview, tabs, tags, daily note, callouts, rename, search, quick switcher, command palette, watcher, PDF and Word export, close and reopen.');
+  console.log('PASS: vault, workspace file, draw mode, live preview, tasks, wikilinks, backlinks, outline, history, reading view, format, selection toolbar, highlight, hover preview, tabs, tags, daily note, callouts, rename, search, quick switcher, command palette, watcher, PDF and Word export, close and reopen.');
 } catch (error) {
   try { const page = await app?.firstWindow(); await page?.screenshot({ path: path.join(output, 'failure.png') }); console.error(await page?.locator('body').innerText()); } catch { /* the app may have exited */ }
   throw error;

@@ -89,19 +89,32 @@ export function GraphView({ notes, resolve, focus, onOpen }: { notes: Note[]; re
     const tick = () => {
       const { nodes, edges } = s.graph;
       if (s.alpha > 0.005 && nodes.length) {
-        const repulsion = 1600, spring = 0.02, gravity = 0.01, damping = 0.85;
+        const repulsion = 1600, spring = 0.02, gravity = 0.01, damping = 0.85, cell = 500;
+        // Repulsion only acts within 500 px, so nodes are bucketed into a grid and only
+        // neighboring cells are compared. This keeps large graphs near linear per frame.
+        const buckets = new Map<string, number[]>();
+        for (let i = 0; i < nodes.length; i++) {
+          const key = `${Math.floor(nodes[i].x / cell)},${Math.floor(nodes[i].y / cell)}`;
+          const list = buckets.get(key); if (list) list.push(i); else buckets.set(key, [i]);
+        }
         for (let i = 0; i < nodes.length; i++) {
           const a = nodes[i];
-          for (let j = i + 1; j < nodes.length; j++) {
-            const b = nodes[j];
-            let dx = a.x - b.x, dy = a.y - b.y;
-            let d2 = dx * dx + dy * dy;
-            if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
-            if (d2 > 250000) continue;
-            const force = repulsion / d2 * s.alpha;
-            const d = Math.sqrt(d2);
-            const fx = dx / d * force, fy = dy / d * force;
-            a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+          const cx = Math.floor(a.x / cell), cy = Math.floor(a.y / cell);
+          for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+            const list = buckets.get(`${cx + ox},${cy + oy}`);
+            if (!list) continue;
+            for (const j of list) {
+              if (j <= i) continue;
+              const b = nodes[j];
+              let dx = a.x - b.x, dy = a.y - b.y;
+              let d2 = dx * dx + dy * dy;
+              if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+              if (d2 > 250000) continue;
+              const force = repulsion / d2 * s.alpha;
+              const d = Math.sqrt(d2);
+              const fx = dx / d * force, fy = dy / d * force;
+              a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+            }
           }
         }
         for (const edge of edges) {

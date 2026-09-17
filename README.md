@@ -39,6 +39,7 @@ The ribbon is the icon strip on the left edge. It has the quick switcher, the gr
 
 - **Graph view** shows every note as a dot and every link as a line. Drag dots, scroll to zoom, click a dot to open the note. The local graph shows only the open note and its links.
 - **Canvas** is a freeform board saved as a `.canvas` file in the JSON Canvas format that Obsidian uses. Double-click to add a text card, add a note card from the vault, drag a side handle to connect cards, and pick a color for a card.
+- **Draw** mode in a canvas is a freehand whiteboard on [tldraw](https://tldraw.dev). The drawing is stored in the same `.canvas` file under a `tldraw` key. Obsidian ignores that key. tldraw shows its watermark, because the app has no tldraw license.
 - **Templates** are notes in the `Templates` folder. Insert one from the ribbon or the command palette. `{{date}}`, `{{time}}`, `{{title}}`, and `{{date:YYYY-MM-DD}}` fill in.
 - **Settings** has the theme, text size, readable line length, default view, spellcheck, line numbers, new note location, and the folders for attachments, daily notes, and templates.
 
@@ -83,6 +84,12 @@ The ribbon is the icon strip on the left edge. It has the quick switcher, the gr
 
 On Windows the app uses a hidden title bar with the native caption buttons, so snap layouts and the system menu work. The tabs live in the title bar. Right-click in the editor for the native menu with spelling suggestions.
 
+## State and logs
+
+Per-vault state lives in `.document/workspace.json` inside the vault: open tabs, expanded folders, bookmarks, recent notes, sidebar layout, and canvas positions. It travels with the folder. App settings that apply to every vault stay in the app profile.
+
+Errors and freezes are written to `logs/document.log` in the app profile. Native crash dumps go next to it. Open the folder from Settings or the File menu. If the window stops responding, a dialog offers to wait or reload.
+
 ## Large vaults
 
 The app reads every note into memory for search, links, and backlinks. Notes over 2 MB are skipped, and the index stops at 20000 notes. On macOS and Windows one recursive watcher covers the vault. On Linux each folder has its own watcher.
@@ -116,7 +123,7 @@ npm test
 npm run test:desktop
 ```
 
-The unit tests cover the vault file operations, the frontmatter format, the PDF export, and the Word export. The desktop test uses Xvfb on Linux. It launches Electron with a temporary vault. It checks note creation, live preview, tasks, wikilinks, backlinks, the outline, history, reading view, rename, search, the quick switcher, the command palette, the file watcher, PDF export, and save on close.
+The unit tests cover the vault file operations, the frontmatter format, the PDF export, and the Word export. The desktop test runs on Linux, Windows, and macOS in GitHub Actions on every push. On Linux it uses Xvfb. It launches Electron with a temporary vault. It checks note creation, live preview, tasks, wikilinks, backlinks, the outline, history, reading view, rename, search, the quick switcher, the command palette, the file watcher, PDF export, and save on close.
 
 ## Implementation
 

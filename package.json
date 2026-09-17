@@ -1,6 +1,6 @@
 {
   "name": "lab86-document",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "A desktop Markdown editor for a folder of notes.",
   "author": "Jakob Langtry",
@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "start": "npm run build && electron .",
     "test": "node --test tests/*.test.cjs",
-    "test:desktop": "npm run build && xvfb-run -a node tests/desktop.mjs && xvfb-run -a node tests/tab-indent.desktop.mjs",
+    "test:desktop": "npm run build && node scripts/test-desktop.mjs",
     "package": "npm run build && electron-builder --dir",
     "package:mac": "node scripts/package-mac.mjs",
     "package:windows": "npm run build && electron-builder --win portable --x64",
@@ -88,7 +88,9 @@
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.3.7",
+    "@tldraw/assets": "^5.4.2",
     "docx": "^9.7.1",
-    "marked": "^18.0.13"
+    "marked": "^18.0.13",
+    "tldraw": "^5.4.2"
   }
 }
