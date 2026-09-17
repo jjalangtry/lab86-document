@@ -71,6 +71,10 @@ On the first start, make a new vault or open a folder that has Markdown files. T
 
 On Windows the app uses a hidden title bar with the native caption buttons, so snap layouts and the system menu work. The tabs live in the title bar. Right-click in the editor for the native menu with spelling suggestions.
 
+## Large vaults
+
+The app reads every note into memory for search, links, and backlinks. Notes over 2 MB are skipped, and the index stops at 20000 notes. On macOS and Windows one recursive watcher covers the vault. On Linux each folder has its own watcher.
+
 ## Files
 
 The vault is a normal folder. Other programs can read and write the notes. The app shows changes from other programs after a short delay. Deleted files move to the system trash. Folders that start with a dot are hidden.

@@ -1,9 +1,9 @@
 import { Compartment, EditorSelection, EditorState, Prec, StateField, type Extension } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType, drawSelection, dropCursor, hoverTooltip, keymap, showTooltip, type Tooltip } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands';
 import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
-import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
+import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { autocompletion, type CompletionContext } from '@codemirror/autocomplete';
 import type { InlineContext, MarkdownConfig } from '@lezer/markdown';
 import type { SyntaxNode } from '@lezer/common';
@@ -156,6 +156,7 @@ class FrontmatterWidget extends WidgetType {
 // The frontmatter block shows as a format summary unless the cursor is inside it.
 function frontmatterField(host: () => EditorHost) {
   const build = (state: EditorState) => {
+    if (state.doc.sliceString(0, 3) !== '---') return Decoration.none;
     const head = state.doc.sliceString(0, Math.min(state.doc.length, 20000));
     const block = parseFrontmatter(head);
     if (!block) return Decoration.none;
@@ -178,6 +179,10 @@ function livePreview(host: () => EditorHost) {
       if (update.docChanged || update.viewportChanged || update.selectionSet || syntaxTree(update.startState) !== syntaxTree(update.state)) this.decorations = this.build(update.view);
     }
     build(view: EditorView) {
+      // A decoration error must not stop the editor. The preview falls back to plain marks.
+      try { return this.compute(view); } catch (error) { console.error('live preview', error); return Decoration.none; }
+    }
+    compute(view: EditorView) {
       const { state } = view, doc = state.doc, ranges = state.selection.ranges;
       const marks: { from: number; to: number; deco: Decoration }[] = [];
       const touches = (from: number, to: number) => ranges.some(r => r.from <= to && r.to >= from);
@@ -517,6 +522,9 @@ async function insertFiles(view: EditorView, files: FileList | File[], host: Edi
 
 export type NoteEditor = {
   view: EditorView;
+  undo(): boolean;
+  redo(): boolean;
+  openSearch(): boolean;
   open(path: string, text: string): void;
   setMode(mode: Exclude<Mode, 'reading'>): void;
   text(): string;
@@ -547,7 +555,8 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
     modeCompartment.of(modeExtension(initialMode)),
     selectionToolbar(host),
     linkPreview(host),
-    EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'on', autocapitalize: 'sentences', 'aria-label': 'Note text' }),
+    EditorView.contentAttributes.of({ spellcheck: 'true', autocorrect: 'off', autocapitalize: 'off', 'aria-label': 'Note text' }),
+    EditorView.exceptionSink.of(error => console.error('editor', error)),
     Prec.highest(keymap.of([
       { key: 'Enter', run: endEmptyListItem },
       { key: 'Mod-b', run: commands.bold }, { key: 'Mod-i', run: commands.italic }, { key: 'Mod-u', run: commands.underline }, { key: 'Mod-k', run: commands.link },
@@ -592,6 +601,9 @@ export function createEditor(parent: HTMLElement, host: () => EditorHost, initia
   const view = new EditorView({ parent, state: EditorState.create({ doc: '', extensions }) });
   return {
     view,
+    undo() { return undo(view); },
+    redo() { return redo(view); },
+    openSearch() { return openSearchPanel(view); },
     open(path, text) {
       if (current) states.set(current, view.state);
       const cached = states.get(path);

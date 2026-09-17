@@ -115,3 +115,21 @@ test('the tree watcher reports changes inside folders that appear later', async 
     assert.ok(!seen.includes('.hidden.md'));
   } finally { watcher.close(); await fs.rm(directory, { recursive: true, force: true }); }
 });
+
+test('the recursive watcher reports changes and collapses large batches', async () => {
+  const { TreeWatcher } = require('../electron/watcher.cjs');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'document-watch-'));
+  await fs.mkdir(path.join(directory, 'Ideas'));
+  const batches = [];
+  const watcher = new TreeWatcher(directory, changed => batches.push(changed), { delay: 100, recursive: true, maxBatch: 3 });
+  const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
+  try {
+    await watcher.ready;
+    await fs.writeFile(path.join(directory, 'Ideas', 'Third.md'), 'a');
+    await settle(300);
+    assert.ok(batches.flat().includes('Ideas/Third.md'), JSON.stringify(batches));
+    for (let i = 0; i < 8; i++) await fs.writeFile(path.join(directory, `Note ${i}.md`), 'x');
+    await settle(300);
+    assert.deepEqual(batches[batches.length - 1], ['*']);
+  } finally { watcher.close(); await fs.rm(directory, { recursive: true, force: true }); }
+});

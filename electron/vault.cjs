@@ -60,13 +60,19 @@ class Vault {
   }
 
   // Reads every note. The renderer uses this for search, links, and backlinks.
+  // Notes over 2 MB are skipped, and the index stops at 20000 notes.
   async index() {
     const notes = [];
     const walk = async entries => {
       for (const entry of entries) {
+        if (notes.length >= 20000) return;
         if (entry.kind === 'folder') await walk(entry.children);
         else if (entry.kind === 'note') {
-          try { notes.push({ path: entry.path, text: await this.read(entry.path) }); } catch { /* unreadable notes are skipped */ }
+          try {
+            const info = await fs.stat(this.resolve(entry.path));
+            if (info.size > 2_000_000) continue;
+            notes.push({ path: entry.path, text: await this.read(entry.path) });
+          } catch { /* unreadable notes are skipped */ }
         }
       }
     };

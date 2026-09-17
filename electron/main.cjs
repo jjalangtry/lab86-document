@@ -175,6 +175,7 @@ app.whenReady().then(async () => {
 
   function createWindow() {
     closing = false;
+    if (vault && !watcher) startWatcher();
     window = new BrowserWindow({
       width: 1360, height: 900, minWidth: 760, minHeight: 500,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
@@ -226,7 +227,16 @@ app.whenReady().then(async () => {
       { type: 'separator' },
       { label: 'Close window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },
     ] },
-    { role: 'editMenu' },
+    // Undo and redo go to the editor. The native roles would run the browser's own undo
+    // on the editor's content and corrupt it.
+    { label: 'Edit', submenu: [
+      { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: command('undo') },
+      { label: 'Redo', accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'CmdOrCtrl+Y', click: command('redo') },
+      { type: 'separator' },
+      { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+      { type: 'separator' },
+      { label: 'Find in note', accelerator: 'CmdOrCtrl+F', click: command('find') },
+    ] },
     { label: 'View', submenu: [
       { label: 'Command palette', accelerator: 'CmdOrCtrl+P', click: command('command-palette') },
       { label: 'Search in all notes', accelerator: 'CmdOrCtrl+Shift+F', click: command('search') },
@@ -247,4 +257,4 @@ app.whenReady().then(async () => {
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
-app.on('window-all-closed', () => { watcher?.close(); if (!isMac) app.quit(); });
+app.on('window-all-closed', () => { watcher?.close(); watcher = null; if (!isMac) app.quit(); });

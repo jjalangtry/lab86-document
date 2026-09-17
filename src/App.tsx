@@ -77,14 +77,20 @@ export default function App() {
   const headings = useMemo(() => outline(text), [text]);
   const counts = useMemo(() => countWords(text), [text]);
   const format = useMemo(() => formatOf(text), [text]);
-  const links = useMemo(() => open ? findBacklinks(open, notes, resolve) : [], [open, notes, resolve]);
-  const hits = useMemo(() => searchNotes(query, notes), [query, notes]);
-  const tags = useMemo(() => tagCounts(notes), [notes]);
+  const links = useMemo(() => open && right && rightTab === 'backlinks' ? findBacklinks(open, notes, resolve) : [], [open, notes, resolve, right, rightTab]);
+  const hits = useMemo(() => left && leftTab === 'search' ? searchNotes(query, notes) : [], [query, notes, left, leftTab]);
+  const tags = useMemo(() => left && leftTab === 'tags' ? tagCounts(notes) : [], [notes, left, leftTab]);
   const fail = useCallback((e: unknown) => setError(errorMessage(e)), []);
 
-  const updateNote = useCallback((path: string, value: string) => {
+  // The notes index in state drives backlinks, tags, and search. Updates from typing are
+  // batched so a large vault does not recompute them on every save.
+  const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateNote = useCallback((path: string, value: string, immediate = false) => {
     const list = notesRef.current.some(n => n.path === path) ? notesRef.current.map(n => n.path === path ? { path, text: value } : n) : [...notesRef.current, { path, text: value }];
-    notesRef.current = list; setNotes(list);
+    notesRef.current = list;
+    if (immediate) { if (notesTimer.current) clearTimeout(notesTimer.current); notesTimer.current = null; setNotes(list); return; }
+    if (notesTimer.current) clearTimeout(notesTimer.current);
+    notesTimer.current = setTimeout(() => { notesTimer.current = null; setNotes(notesRef.current); }, 1500);
   }, []);
   const flush = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -129,7 +135,7 @@ export default function App() {
   const showPath = useCallback(async (path: string | null) => {
     if (!path) { openRef.current = null; renamedRef.current = null; setText(''); return; }
     let value = notesRef.current.find(n => n.path === path)?.text;
-    if (value === undefined) { value = await api.read(path); updateNote(path, value); }
+    if (value === undefined) { value = await api.read(path); updateNote(path, value, true); }
     openRef.current = path; renamedRef.current = null; setText(value);
     localStorage.setItem(`document.lastOpen:${vaultPath}`, path);
     const recent = JSON.parse(stored(`document.recent:${vaultPath}`, '[]')) as string[];
@@ -240,7 +246,7 @@ export default function App() {
     try {
       const clean = name.replace(/\.md$/i, '').replace(/^\/+|\/+$/g, '');
       const path = await api.createNote(folderOf(clean), clean.split('/').pop() || 'Untitled', text);
-      updateNote(path, text);
+      updateNote(path, text, true);
       await refresh();
       if (folderOf(path)) setExpanded(current => new Set([...current, ...folderOf(path).split('/').map((_, i, parts) => parts.slice(0, i + 1).join('/'))]));
       await openNote(path);
@@ -292,7 +298,7 @@ export default function App() {
       if (note) {
         await updateLinks(path, newPath);
         const value = notesRef.current.find(n => n.path === path)?.text ?? '';
-        notesRef.current = notesRef.current.filter(n => n.path !== path); updateNote(newPath, value);
+        notesRef.current = notesRef.current.filter(n => n.path !== path); updateNote(newPath, value, true);
         editorRef.current?.rename(path, newPath);
         if (openRef.current === path) { openRef.current = newPath; renamedRef.current = newPath; localStorage.setItem(`document.lastOpen:${vaultPath}`, newPath); }
         remapTabs(p => p === path ? newPath : p);
@@ -431,6 +437,9 @@ export default function App() {
     { id: 'close-tab', name: 'Close tab', hint: keys('Mod+W'), run: () => void closeTab(activeRef.current) },
     { id: 'next-tab', name: 'Next tab', hint: 'Ctrl+Tab', run: () => cycleTab(1) },
     { id: 'previous-tab', name: 'Previous tab', hint: 'Ctrl+Shift+Tab', run: () => cycleTab(-1) },
+    { id: 'undo', name: 'Undo', hint: keys('Mod+Z'), run: () => { const active = document.activeElement; if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) document.execCommand('undo'); else editorRef.current?.undo(); } },
+    { id: 'redo', name: 'Redo', hint: isMac ? '⇧⌘Z' : 'Ctrl+Y', run: () => { const active = document.activeElement; if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) document.execCommand('redo'); else editorRef.current?.redo(); } },
+    { id: 'find', name: 'Find in note', hint: keys('Mod+F'), run: () => { if (mode !== 'reading') { editorRef.current?.openSearch(); editorRef.current?.view.focus(); } }, when: !!open },
     { id: 'quick-switcher', name: 'Open quick switcher', hint: keys('Mod+O'), run: () => { setPaletteQuery(''); setPalette('files'); } },
     { id: 'search', name: 'Search in all notes', hint: keys('Mod+Shift+F'), run: () => { setLeft(true); setLeftTab('search'); setTimeout(() => searchInput.current?.select(), 0); } },
     { id: 'tags', name: 'Show tags', run: () => { setLeft(true); setLeftTab('tags'); } },
@@ -476,6 +485,14 @@ export default function App() {
   useEffect(() => api.onClose(() => { void flush().then(() => api.closeReady()).catch(e => api.closeFailed(errorMessage(e))); }), [flush]);
   useEffect(() => api.onChanged(async paths => {
     try {
+      if (paths.includes('*') || paths.length > 200) {
+        // Too many changes to read one by one: reload the tree and the index.
+        await flush().catch(() => {});
+        await refresh(true);
+        const path = openRef.current;
+        if (path) { const value = notesRef.current.find(n => n.path === path)?.text; if (value === undefined) await showPath(null); else setText(value); }
+        return;
+      }
       const nextTree = await api.tree();
       setTree(nextTree);
       const existing = new Set(flatten(nextTree));
@@ -493,11 +510,11 @@ export default function App() {
         if (dirty.current.has(path)) continue;
         const value = await api.read(path).catch(() => null);
         if (value === null || notesRef.current.find(n => n.path === path)?.text === value) continue;
-        updateNote(path, value);
+        updateNote(path, value, true);
         if (openRef.current === path) setText(value);
       }
     } catch { /* the next change repeats the refresh */ }
-  }), [showPath, updateNote]);
+  }), [flush, refresh, showPath, updateNote]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const meta = isMac ? event.metaKey : event.ctrlKey;
