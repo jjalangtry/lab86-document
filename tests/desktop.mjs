@@ -342,8 +342,9 @@ try {
   await page.locator('.cm-content .cm-line').last().click();
   await page.keyboard.press(docEnd);
   await page.keyboard.type(' Last words.');
+  // Quit instead of closing the window: on macOS the app stays alive with no windows.
   const exited = new Promise(resolve => app.process().once('exit', resolve));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await app.evaluate(({ app: electronApp }) => electronApp.quit());
   await exited;
   expect(await read('First note.md')).toContain('Last words.');
 
